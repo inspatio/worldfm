@@ -1,0 +1,12 @@
+[submodule "submodules/HunyuanWorld-1.0"]
+	path = submodules/HunyuanWorld-1.0
+	url = https://github.com/Tencent-Hunyuan/HunyuanWorld-1.0.git
+[submodule "submodules/MoGe"]
+	path = submodules/MoGe
+	url = https://github.com/microsoft/MoGe.git
+[submodule "submodules/Real-ESRGAN"]
+	path = submodules/Real-ESRGAN
+	url = https://github.com/xinntao/Real-ESRGAN.git
+[submodule "submodules/ZIM"]
+	path = submodules/ZIM
+	url = https://github.com/naver-ai/ZIM.git

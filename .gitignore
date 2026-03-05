@@ -1,0 +1,8 @@
+data/
+outputs/
+condaenv*
+tests/
+__pycache__/
+plans/
+weights/
+upload_ckpts.py

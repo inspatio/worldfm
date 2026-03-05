@@ -1,0 +1,55 @@
+# WorldFM Pipeline Default Configuration
+# Override via CLI args: python run_pipeline.py --meta ... --worldfm.model_path ...
+# Or load a custom config: python run_pipeline.py --config my_config.yaml --meta ...
+
+# ─── Pipeline ─────────────────────────────────────────────────────────────────
+pipeline:
+  output_dir: outputs
+  gpu_index: 0
+
+# ─── External repos (auto-detect from submodules/ if empty) ──────────────────
+submodules:
+  hw_path: ""
+  moge_path: ""
+
+# ─── Step 1: Panorama generation (HunyuanWorld) ─────────────────────────────
+panogen:
+  seed: 42
+  fp8_attention: false
+  fp8_gemm: false
+  cache: false
+
+# ─── Step 2: MoGe depth estimation ───────────────────────────────────────────
+moge:
+  pretrained: Ruicheng/moge-2-vitl-normal
+  resolution_level: 30
+  fov_deg: 45.0
+  num_views: 42
+  merge_max_width: 4096
+  merge_max_height: 2048
+  batch_size: 4
+
+# ─── Step 3: Condition rendering & view selection ────────────────────────────
+render:
+  render_size: 512
+  sample_grid: 10
+  center_grid: 15
+  center_frac: 0.5
+  eps_rel: 0.02
+  eps_abs: 0.0
+  px_radius: 0
+  max_view_angle_deg: 180.0
+  use_distance_weight: true
+  dist_min_m: 1.0
+  dist_max_m: 20.0
+  weight_near: 1.0
+  weight_far: 0.0
+
+# ─── Step 4: WorldFM inference ───────────────────────────────────────────────
+worldfm:
+  step: 2
+  model_path: weights/worldfm_${worldfm.step}-step.pth
+  vae_path: weights/vae
+  image_size: 512
+  version: sigma
+  cfg_scale: 4.5
