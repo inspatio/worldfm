@@ -140,4 +140,4 @@ zipp==3.21.0
 open3d>=0.18.0
 trimesh>=4.6.1
 cmake
-git+https://github.com/EasternJournalist/utils3d.git@3fab839f0be9931dac7c8488eb0e1600c236e183
+git+https://github.com/EasternJournalist/utils3d.git@c5daf6f6c244d251f252102d09e9b7bcef791a38

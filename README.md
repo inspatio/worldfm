@@ -5,7 +5,7 @@
   <a href='https://github.com/inspatio/worldfm/blob/main/LICENSE'><img src='https://img.shields.io/badge/License-Apache%202.0-blue'></a>
 </div>
 
-WorldFM, a real-time multi-view diffusion model. Given a reference image and target camera poses, WorldFM generates images at those new viewpoints. Checkout our websites ([WorldFM](https://inspatio.github.io/worldfm)) for videos and interactive results!
+WorldFM, a real-time multi-view diffusion model. Given a reference image and target camera poses, WorldFM generates images at those new viewpoints. Checkout our website ([WorldFM](https://inspatio.github.io/worldfm)) for videos and interactive results!
 
 
 ## Installation
