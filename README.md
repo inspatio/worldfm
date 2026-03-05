@@ -30,11 +30,11 @@ conda env create -f WorldFM.yaml --prefix /path/to/envs/WorldFM
 conda activate /path/to/envs/WorldFM
 pip install -r requirements.txt
 git submodule update --init --recursive
-cd ../MoGe
+cd submodules/MoGe
 git checkout 7807b5de2bc0c1e80519f5f3d1f38a606f8f9925
 
 # HunyuanWorld-1.0 requirements
-cd submodules/Real-ESRGAN
+cd ../Real-ESRGAN
 pip install basicsr-fixed facexlib gfpgan
 python setup.py develop
 cd ../ZIM
