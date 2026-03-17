@@ -1,5 +1,16 @@
 # WorldFM
 
+<br/>
+
+<div align="center">
+    <img src="resources/worldfm.jpg"/>
+</div>
+<br/>
+
+<div align="left">
+<div align="left">
+
+[![LICENSE](https://img.shields.io/github/license/inspatio/worldfm)](https://github.com/inspatio/worldfm/blob/main/LICENSE)  [![arXiv](https://img.shields.io/badge/arXiv-2603.11911-b31b1b.svg)](https://arxiv.org/abs/2603.11911)
 
 
 WorldFM, a real-time multi-view diffusion model. Given a reference image and target camera poses, WorldFM generates images at those new viewpoints. Checkout our website ([WorldFM](https://inspatio.github.io/worldfm)) for videos and interactive results!
