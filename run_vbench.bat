@@ -3,6 +3,9 @@ if exist venv\Scripts\activate.bat call venv\Scripts\activate.bat
 
 cd /d "%~dp0"
 
+python -m pip install torch==2.7.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128 -q
+if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
+
 python -m pip install -r requirements.txt -q
 if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
 
