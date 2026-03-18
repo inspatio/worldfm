@@ -23,7 +23,7 @@ cycler>=0.12.1
 cython>=3.0.11
 decord>=0.6.0
 diffdist>=0.1
-diffusers>=0.34.0
+diffusers==0.34.0
 easydict>=1.9
 einops>=0.4.1
 executing>=2.2.0
@@ -127,7 +127,7 @@ tokenizers>=0.21.1
 tomli>=2.2.1
 torchmetrics>=1.7.1
 tqdm>=4.67.1
-transformers>=4.51.0
+transformers==4.51.0
 triton-windows
 #triton @ https://github.com/woct0rdho/triton-windows/releases/download/v3.2.0-windows.post9/triton-3.2.0-cp312-cp312-win_amd64.whl
 tzdata>=2025.2
