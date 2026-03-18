@@ -3,7 +3,7 @@ cd /d "%~dp0"
 
 if not exist .venvv\Scripts\activate.bat (
     echo Creating venv...
-    python -m venv .venvv
+    python -m venv .venv
     if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
 )
 call .venvv\Scripts\activate.bat
