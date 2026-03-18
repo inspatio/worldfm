@@ -1,5 +1,5 @@
 packaging
-pkg_resources
+setuptools
 absl-py>=2.2.2
 accelerate>=1.6.0
 addict>=2.4.0
