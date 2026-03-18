@@ -1,12 +1,12 @@
 @echo off
 cd /d "%~dp0"
 
-if not exist .venvv\Scripts\activate.bat (
+if not exist .venv\Scripts\activate.bat (
     echo Creating venv...
     python -m venv .venv
     if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
 )
-call .venvv\Scripts\activate.bat
+call .venv\Scripts\activate.bat
 
 python -m pip install wheel setuptools packaging -q
 if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
