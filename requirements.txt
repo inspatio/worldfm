@@ -61,7 +61,6 @@ markdown-it-py>=3.0.0
 matplotlib>=3.10.1
 mdurl>=0.1.2
 multidict>=6.4.3
-mmcv @ https://download.openmmlab.com/mmcv/dist/cu128/torch2.7.0/mmcv-2.2.0-cp312-cp312-win_amd64.whl
 mmengine>=0.10.7
 numba>=0.61.2
 numpy>=1.24.1
@@ -144,3 +143,4 @@ open3d>=0.18.0
 trimesh>=4.6.1
 cmake
 git+https://github.com/EasternJournalist/utils3d.git@c5daf6f6c244d251f252102d09e9b7bcef791a38
+mmcv @ https://download.openmmlab.com/mmcv/dist/cu128/torch2.7.0/mmcv-2.2.0-cp312-cp312-win_amd64.whl
