@@ -1,6 +1,7 @@
 data/
 outputs/
 condaenv*
+venv/
 tests/
 __pycache__/
 plans/
