@@ -128,7 +128,8 @@ tomli>=2.2.1
 torchmetrics>=1.7.1
 tqdm>=4.67.1
 transformers>=4.51.0
-triton @ https://github.com/woct0rdho/triton-windows/releases/download/v3.2.0-windows.post9/triton-3.2.0-cp312-cp312-win_amd64.whl
+triton-windows
+#triton @ https://github.com/woct0rdho/triton-windows/releases/download/v3.2.0-windows.post9/triton-3.2.0-cp312-cp312-win_amd64.whl
 tzdata>=2025.2
 ultralytics>=8.3.74
 ultralytics-thop>=2.0.14
