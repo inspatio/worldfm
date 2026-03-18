@@ -67,7 +67,9 @@ def vbench_batch(
     K        = np.asarray(_demo['K'],   dtype=np.float64)
     c2w_list = [np.asarray(c, dtype=np.float64) for c in _demo['c2w']]
 
-    # parse allowed image types
+    # parse allowed image types (fire may deliver comma-separated value as a tuple)
+    if isinstance(image_types, (list, tuple)):
+        image_types = ','.join(image_types)
     allowed = {t.strip() for t in image_types.split(',') if t.strip()} if image_types else None
 
     with open(info_json, encoding='utf-8') as f:
