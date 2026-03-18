@@ -15,6 +15,7 @@ import json
 import os
 import sys
 import time
+import traceback
 from pathlib import Path
 
 import cv2
@@ -109,94 +110,127 @@ def vbench_batch(
     generated = errors = skipped = 0
     t_start = time.time()
 
-    for ti, img in enumerate(images):
-        image_path = os.path.join(image_dir, img['file'])
-        stem       = Path(img['file']).stem
-        out_mp4    = os.path.join(out_dir, f'{stem}.mp4')
+    def _step(label):
+        print(f'  [{label}]', end=' ', flush=True)
 
-        if not os.path.isfile(image_path):
-            print(f'[vbench] skip {ti+1}/{total}: image not found — {image_path}')
-            stats_w.writerow([ti, img['file'], img['type'], '', '', '', '', 'missing'])
-            stats_f.flush()
-            continue
+    def _finish_step(t):
+        print(f'{round(time.time()-t, 1)}s', flush=True)
 
-        if os.path.exists(out_mp4):
-            print(f'[vbench] skip {ti+1}/{total}: already done — {stem}.mp4')
-            stats_w.writerow([ti, img['file'], img['type'], '', '', '', out_mp4, 'skipped'])
-            stats_f.flush()
-            skipped += 1
-            continue
+    def _log_done():
+        elapsed_m = round((time.time() - t_start) / 60, 1)
+        print(f'\n[vbench] done — generated={generated}  skipped={skipped}  errors={errors}  elapsed={elapsed_m}m')
+        print(f'[vbench] stats -> {stats_path}')
 
-        done_so_far = generated + errors + skipped
-        pct = round(100 * ti / total) if total else 0
-        eta = ''
-        if done_so_far > 0:
-            elapsed = time.time() - t_start
-            rem = int(elapsed / done_so_far * (total - done_so_far))
-            eta = f'  ETA {rem//3600:02d}h{(rem%3600)//60:02d}m{rem%60:02d}s'
-        print(f'[vbench] [{ti+1}/{total}  {pct}%{eta}]  ({img["type"]})  {img["file"]}')
-
-        t0 = time.time()
-        try:
-            # step 1: perspective → panorama
-            tmp_out = _WORLDFM_ROOT / '_vbench_tmp' / stem
-            tmp_out.mkdir(parents=True, exist_ok=True)
-            panorama_img = _p.step1_panogen(image_path, tmp_out, cfg=cfg)
-
-            # step 2: panorama → depth / PLY / conditions
-            pp_result = _p.step2_moge_pipeline(panorama_img, tmp_out, cfg=cfg)
-
-            # step 3: init renderer + condition DB (per image)
-            renderer, cond_db, rcfg, S = _p.step3_init(pp_result, cfg=cfg)
-
-            # step 4: render + infer each pose
-            frames = []
-            for c2w in c2w_list:
-                render_u8, cond_nearest = _p.step3_render_one(
-                    renderer, cond_db, pp_result, K, c2w,
-                    rcfg=rcfg, render_size=S,
-                )
-                frame = _p.step4_infer_one(svc, render_u8, cond_nearest, wcfg=wcfg)
-                frames.append(frame)
-
-            del renderer, cond_db
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-
-            # save video
-            h, w = frames[0].shape[:2]
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            writer = cv2.VideoWriter(out_mp4, fourcc, fps, (w, h))
-            for fr in frames:
-                writer.write(cv2.cvtColor(fr, cv2.COLOR_RGB2BGR))
-            writer.release()
-
-            dur  = round(time.time() - t0, 2)
-            vram = round(torch.cuda.max_memory_allocated() / 1024**3, 2) if torch.cuda.is_available() else ''
-            try:
-                import psutil
-                ram = round(psutil.Process().memory_info().rss / 1024**3, 2)
-            except Exception:
-                ram = ''
-
-            print(f'  done in {dur}s  VRAM {vram}GB  RAM {ram}GB  -> {stem}.mp4')
-            stats_w.writerow([ti, img['file'], img['type'], dur, vram, ram, out_mp4, 'ok'])
-            generated += 1
-
-        except Exception as exc:
-            print(f'  EXCEPTION: {exc}', file=sys.stderr)
-            stats_w.writerow([ti, img['file'], img['type'], '', '', '', '', 'error'])
-            errors += 1
-        finally:
+    try:
+        for ti, img in enumerate(images):
             import shutil
-            shutil.rmtree(_WORLDFM_ROOT / '_vbench_tmp' / stem, ignore_errors=True)
+            image_path = os.path.join(image_dir, img['file'])
+            stem       = Path(img['file']).stem
+            out_mp4    = os.path.join(out_dir, f'{stem}.mp4')
 
-        stats_f.flush()
+            if not os.path.isfile(image_path):
+                print(f'[vbench] skip {ti+1}/{total}: image not found - {image_path}')
+                stats_w.writerow([ti, img['file'], img['type'], '', '', '', '', 'missing'])
+                stats_f.flush()
+                continue
 
-    stats_f.close()
-    elapsed_m = round((time.time() - t_start) / 60, 1)
-    print(f'\n[vbench] done — generated={generated}  skipped={skipped}  errors={errors}  elapsed={elapsed_m}m')
-    print(f'[vbench] stats → {stats_path}')
+            if os.path.exists(out_mp4):
+                print(f'[vbench] skip {ti+1}/{total}: already done - {stem}.mp4')
+                stats_w.writerow([ti, img['file'], img['type'], '', '', '', out_mp4, 'skipped'])
+                stats_f.flush()
+                skipped += 1
+                continue
+
+            done_so_far = generated + errors + skipped
+            pct = round(100 * ti / total) if total else 0
+            eta = ''
+            if done_so_far > 0:
+                elapsed = time.time() - t_start
+                rem = int(elapsed / done_so_far * (total - done_so_far))
+                eta = f'  ETA {rem//3600:02d}h{(rem%3600)//60:02d}m{rem%60:02d}s'
+            print(f'[vbench] [{ti+1}/{total}  {pct}%{eta}]  ({img["type"]})  {img["file"]}')
+
+            t0 = time.time()
+            tmp_out = _WORLDFM_ROOT / '_vbench_tmp' / stem
+            try:
+                tmp_out.mkdir(parents=True, exist_ok=True)
+
+                _step('panogen')
+                ts = time.time()
+                panorama_img = _p.step1_panogen(image_path, tmp_out, cfg=cfg)
+                _finish_step(ts)
+
+                _step('moge')
+                ts = time.time()
+                pp_result = _p.step2_moge_pipeline(panorama_img, tmp_out, cfg=cfg)
+                _finish_step(ts)
+
+                _step('renderer')
+                ts = time.time()
+                renderer, cond_db, rcfg, S = _p.step3_init(pp_result, cfg=cfg)
+                _finish_step(ts)
+
+                _step(f'infer x{len(c2w_list)}')
+                ts = time.time()
+                frames = []
+                for fi, c2w in enumerate(c2w_list):
+                    render_u8, cond_nearest = _p.step3_render_one(
+                        renderer, cond_db, pp_result, K, c2w,
+                        rcfg=rcfg, render_size=S,
+                    )
+                    frame = _p.step4_infer_one(svc, render_u8, cond_nearest, wcfg=wcfg)
+                    frames.append(frame)
+                    print(f'\r  [infer {fi+1}/{len(c2w_list)}]', end='', flush=True)
+                _finish_step(ts)
+
+                del renderer, cond_db
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
+                # save video
+                h, w = frames[0].shape[:2]
+                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                vw = cv2.VideoWriter(out_mp4, fourcc, fps, (w, h))
+                for fr in frames:
+                    vw.write(cv2.cvtColor(fr, cv2.COLOR_RGB2BGR))
+                vw.release()
+
+                dur  = round(time.time() - t0, 2)
+                vram = round(torch.cuda.max_memory_allocated() / 1024**3, 2) if torch.cuda.is_available() else ''
+                try:
+                    import psutil
+                    ram = round(psutil.Process().memory_info().rss / 1024**3, 2)
+                except Exception:
+                    ram = ''
+
+                print(f'  done {dur}s  VRAM {vram}GB  RAM {ram}GB  -> {stem}.mp4')
+                stats_w.writerow([ti, img['file'], img['type'], dur, vram, ram, out_mp4, 'ok'])
+                generated += 1
+
+            except torch.cuda.OutOfMemoryError:
+                print(f'\n  [OOM] clearing cache and skipping {stem}', file=sys.stderr)
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                stats_w.writerow([ti, img['file'], img['type'], '', '', '', '', 'oom'])
+                errors += 1
+
+            except Exception:
+                print(f'\n  [ERROR] {stem}:', file=sys.stderr)
+                traceback.print_exc(file=sys.stderr)
+                stats_w.writerow([ti, img['file'], img['type'], '', '', '', '', 'error'])
+                errors += 1
+
+            finally:
+                shutil.rmtree(tmp_out, ignore_errors=True)
+
+            stats_f.flush()
+
+    except KeyboardInterrupt:
+        print('\n[vbench] interrupted by user')
+
+    finally:
+        stats_f.close()
+        _log_done()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
