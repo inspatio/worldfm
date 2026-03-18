@@ -1,5 +1,6 @@
 data/
 outputs/
+results_vbench/
 condaenv*
 venv/
 tests/
