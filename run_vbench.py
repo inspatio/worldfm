@@ -100,6 +100,7 @@ def vbench_batch(
     cfg_scale=None,
     mid_t=None,
     panogen_steps=None,
+    meta=None,
     interactive=False,
     num_frames=30,
     step_deg=5.0,
@@ -125,7 +126,8 @@ def vbench_batch(
         sys.exit(f'[vbench] ERROR: crop dir not found: {image_dir}')
 
     # load demo K / c2w trajectory
-    with open(_WORLDFM_ROOT / 'demo' / 'meta.json', encoding='utf-8') as f:
+    _meta_path = os.path.abspath(meta) if meta else str(_WORLDFM_ROOT / 'demo' / 'meta.json')
+    with open(_meta_path, encoding='utf-8') as f:
         _demo = json.load(f)
     K        = np.asarray(_demo['K'],   dtype=np.float64)
     _c2w_raw = [np.asarray(c, dtype=np.float64) for c in _demo['c2w']]
