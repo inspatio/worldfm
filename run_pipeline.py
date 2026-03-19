@@ -109,11 +109,30 @@ def setup_external_repos(*, hw_path: str = "", moge_path: str = "") -> None:
 
 # ============================== Step 1 =======================================
 
-def step1_panogen(image_path: str, output_dir: Path, *, cfg=None, prompt: str = ""):
+def step1_init(*, cfg=None):
+    """Load the panorama generation model once (heavy, reusable across images).
+
+    Returns Image2PanoramaDemo instance.
+    Requires setup_external_repos() to have been called first.
+    """
+    pcfg = (cfg or DEFAULT_CFG).panogen
+
+    class _Args:
+        fp8_attention = bool(pcfg.fp8_attention)
+        fp8_gemm = bool(pcfg.fp8_gemm)
+        cache = bool(pcfg.cache)
+
+    demo = Image2PanoramaDemo(_Args())
+    demo.num_inference_steps = int(pcfg.num_inference_steps)
+    return demo
+
+
+def step1_panogen(image_path: str, output_dir: Path, *, cfg=None, prompt: str = "", demo=None):
     """Perspective image -> panorama (PIL Image).
 
     Returns PIL.Image.Image (panorama).
     Requires setup_external_repos() to have been called first.
+    Pass a pre-loaded demo from step1_init() to avoid reloading the model.
     """
     pcfg = (cfg or DEFAULT_CFG).panogen
     _log("Step1", f"Generating panorama from {image_path}")
@@ -123,13 +142,8 @@ def step1_panogen(image_path: str, output_dir: Path, *, cfg=None, prompt: str = 
         _log("Step1", f"Panorama already exists, loading: {pano_disk}")
         return Image.open(pano_disk).convert("RGB")
 
-    class _Args:
-        fp8_attention = bool(pcfg.fp8_attention)
-        fp8_gemm = bool(pcfg.fp8_gemm)
-        cache = bool(pcfg.cache)
-
-    demo = Image2PanoramaDemo(_Args())
-    demo.num_inference_steps = int(pcfg.num_inference_steps)
+    if demo is None:
+        demo = step1_init(cfg=cfg)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     pano_img = demo.run(
@@ -179,6 +193,11 @@ def step2_moge_pipeline(panorama_img, output_dir: Path, *, cfg=None, pretrained:
         interp = cv2.INTER_AREA if tgt_w < orig_w else cv2.INTER_LINEAR
         image_rgb = cv2.resize(image_rgb, (tgt_w, tgt_h), interpolation=interp)
     height, width = image_rgb.shape[:2]
+
+    import gc
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = moge_pano.MoGeModel.from_pretrained(pretrained).to(device).eval()
@@ -349,6 +368,7 @@ def step4_infer_one(
     cond_nearest_rgb: np.ndarray,
     *,
     wcfg=None,
+    seed: int = None,
 ) -> np.ndarray:
     """Run WorldFM inference for a single frame.
 
@@ -369,10 +389,10 @@ def step4_infer_one(
         ).to(device=device, dtype=torch.uint8)
 
     if step in (1, 2):
-        decoded = svc.infer_from_render_u8(render_u8)
+        decoded = svc.infer_from_render_u8(render_u8, seed=seed)
     else:
         decoded = svc.infer_from_render_u8_multistep(
-            render_u8, sample_steps=step, cfg_scale=cfg_scale,
+            render_u8, sample_steps=step, cfg_scale=cfg_scale, seed=seed,
         )
 
     out_u8 = (

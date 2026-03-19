@@ -106,6 +106,8 @@ def vbench_batch(
     step_deg=5.0,
     frame_width=None,
     frame_height=None,
+    num_seeds=5,
+    seed_start=0,
 ):
     info_json  = os.path.abspath(vbench_info_json or _DEFAULT_INFO_JSON)
     crop_base  = os.path.abspath(crop_dir or _DEFAULT_CROP_DIR)
@@ -184,6 +186,8 @@ def vbench_batch(
         hw_path=str(cfg.submodules.hw_path),
         moge_path=str(cfg.submodules.moge_path),
     )
+    print('[vbench] loading panogen model...')
+    panogen_demo = _p.step1_init(cfg=cfg)
     print('[vbench] loading WorldFM inference service...')
     svc, wcfg = _p.step4_init(cfg=cfg)
     print('[vbench] WorldFM ready\n')
@@ -203,23 +207,27 @@ def vbench_batch(
         print(f'[vbench] stats -> {stats_path}')
 
     try:
+        seeds = list(range(seed_start, seed_start + num_seeds))
+
         for ti, img in enumerate(images):
             import shutil
             image_path = os.path.join(image_dir, img['file'])
             stem       = Path(img['file']).stem
-            out_mp4    = os.path.join(out_dir, f'{stem}.mp4')
 
             if not os.path.isfile(image_path):
                 print(f'[vbench] skip {ti+1}/{total}: image not found - {image_path}')
-                stats_w.writerow([ti, img['file'], img['type'], '', '', '', '', 'missing'])
+                for sd in seeds:
+                    stats_w.writerow([ti, img['file'], img['type'], '', '', '', '', 'missing'])
                 stats_f.flush()
                 continue
 
-            if os.path.exists(out_mp4):
-                print(f'[vbench] skip {ti+1}/{total}: already done - {stem}.mp4')
-                stats_w.writerow([ti, img['file'], img['type'], '', '', '', out_mp4, 'skipped'])
+            out_mp4s = [os.path.join(out_dir, f'{stem}_s{sd}.mp4') for sd in seeds]
+            if all(os.path.exists(p) for p in out_mp4s):
+                print(f'[vbench] skip {ti+1}/{total}: all seeds done - {stem}')
+                for sd, p in zip(seeds, out_mp4s):
+                    stats_w.writerow([ti, img['file'], img['type'], '', '', '', p, 'skipped'])
                 stats_f.flush()
-                skipped += 1
+                skipped += num_seeds
                 continue
 
             done_so_far = generated + errors + skipped
@@ -239,7 +247,7 @@ def vbench_batch(
                 _step('panogen')
                 ts = time.time()
                 try:
-                    panorama_img = _p.step1_panogen(image_path, tmp_out, cfg=cfg, prompt=stem)
+                    panorama_img = _p.step1_panogen(image_path, tmp_out, cfg=cfg, prompt=stem, demo=panogen_demo)
                 except Exception as _e:
                     raise RuntimeError(f'panogen failed: {_e}') from _e
                 _finish_step(ts)
@@ -267,13 +275,13 @@ def vbench_batch(
                     print(f'  [interactive] WASD to steer  ({num_frames} frames, {step_deg}°/frame)')
 
                 _total_frames = num_frames if interactive else len(c2w_list)
-                print(f'  [infer] 0/{_total_frames} frames ...', flush=True)
+
+                # Pre-render all frames once (deterministic); reuse across seeds
+                _step('render-frames')
                 ts = time.time()
-                frames = []
-                _frame_times = []
+                rendered_frames = []
                 _poses = range(num_frames) if interactive else range(len(c2w_list))
                 for fi in _poses:
-                    _tf = time.time()
                     if interactive:
                         if 'a' in _key_held: _yaw   -= _step_r
                         if 'd' in _key_held: _yaw   += _step_r
@@ -290,75 +298,88 @@ def vbench_batch(
                         )
                     except Exception as _fe:
                         raise RuntimeError(f'frame {fi+1}/{_total_frames}: render failed') from _fe
-                    try:
-                        frame = _p.step4_infer_one(svc, render_u8, cond_nearest, wcfg=wcfg)
-                    except Exception as _fe:
-                        raise RuntimeError(f'frame {fi+1}/{_total_frames}: WorldFM inference failed') from _fe
-                    frames.append(frame)
-                    _frame_times.append(time.time() - _tf)
-                    _avg = sum(_frame_times) / len(_frame_times)
-                    _eta_s = int(_avg * (_total_frames - fi - 1))
-                    _vram = f'  VRAM {torch.cuda.memory_allocated()/1024**3:.1f}GB' if torch.cuda.is_available() else ''
-                    if interactive:
-                        _keys_str = ''.join(k for k in ('w', 'a', 's', 'd') if k in _key_held) or '-'
-                        print(f'\r  [infer {fi+1}/{_total_frames}  {_frame_times[-1]:.1f}s/frame  ETA {_eta_s}s{_vram}  yaw={np.degrees(_yaw):.0f}°  keys={_keys_str}]  ',
-                              end='', flush=True)
-                    else:
-                        print(f'\r  [infer {fi+1}/{_total_frames}  {_frame_times[-1]:.1f}s/frame  ETA {_eta_s}s{_vram}]  ',
-                              end='', flush=True)
-                print()
+                    rendered_frames.append((render_u8, cond_nearest))
+                _finish_step(ts)
 
                 if interactive:
                     _key_stop()
-                _finish_step(ts)
 
                 del renderer, cond_db
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
 
-                # save video
-                h, w = frames[0].shape[:2]
-                out_w = frame_width  or w
-                out_h = frame_height or h
-                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-                vw = cv2.VideoWriter(out_mp4, fourcc, fps, (out_w, out_h))
-                for fr in frames:
-                    bgr = cv2.cvtColor(fr, cv2.COLOR_RGB2BGR)
-                    if (out_w, out_h) != (w, h):
-                        bgr = cv2.resize(bgr, (out_w, out_h), interpolation=cv2.INTER_LANCZOS4)
-                    vw.write(bgr)
-                vw.release()
+                # Run inference for each seed
+                for sd in seeds:
+                    out_mp4 = os.path.join(out_dir, f'{stem}_s{sd}.mp4')
+                    if os.path.exists(out_mp4):
+                        print(f'  [seed {sd}] already done, skipping')
+                        stats_w.writerow([ti, img['file'], img['type'], '', '', '', out_mp4, 'skipped'])
+                        skipped += 1
+                        continue
 
-                dur  = round(time.time() - t0, 2)
-                vram = round(torch.cuda.max_memory_allocated() / 1024**3, 2) if torch.cuda.is_available() else ''
-                try:
-                    import psutil
-                    ram = round(psutil.Process().memory_info().rss / 1024**3, 2)
-                except Exception:
-                    ram = ''
+                    print(f'  [infer seed={sd}] 0/{_total_frames} frames ...', flush=True)
+                    ts = time.time()
+                    frames = []
+                    _frame_times = []
+                    for fi, (render_u8, cond_nearest) in enumerate(rendered_frames):
+                        _tf = time.time()
+                        try:
+                            frame = _p.step4_infer_one(svc, render_u8, cond_nearest, wcfg=wcfg, seed=sd * 1000 + fi)
+                        except Exception as _fe:
+                            raise RuntimeError(f'seed {sd} frame {fi+1}/{_total_frames}: WorldFM inference failed') from _fe
+                        frames.append(frame)
+                        _frame_times.append(time.time() - _tf)
+                        _avg = sum(_frame_times) / len(_frame_times)
+                        _eta_s = int(_avg * (_total_frames - fi - 1))
+                        _vram = f'  VRAM {torch.cuda.memory_allocated()/1024**3:.1f}GB' if torch.cuda.is_available() else ''
+                        print(f'\r  [infer {fi+1}/{_total_frames}  {_frame_times[-1]:.1f}s/frame  ETA {_eta_s}s{_vram}]  ',
+                              end='', flush=True)
+                    print()
+                    _finish_step(ts)
 
-                print(f'  done {dur}s  VRAM {vram}GB  RAM {ram}GB  -> {stem}.mp4')
-                stats_w.writerow([ti, img['file'], img['type'], dur, vram, ram, out_mp4, 'ok'])
-                generated += 1
+                    h, w = frames[0].shape[:2]
+                    out_w = frame_width  or w
+                    out_h = frame_height or h
+                    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                    vw = cv2.VideoWriter(out_mp4, fourcc, fps, (out_w, out_h))
+                    for fr in frames:
+                        bgr = cv2.cvtColor(fr, cv2.COLOR_RGB2BGR)
+                        if (out_w, out_h) != (w, h):
+                            bgr = cv2.resize(bgr, (out_w, out_h), interpolation=cv2.INTER_LANCZOS4)
+                        vw.write(bgr)
+                    vw.release()
 
-            except torch.cuda.OutOfMemoryError:
-                print(f'\n  [OOM] clearing cache and skipping {stem}', file=sys.stderr)
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                stats_w.writerow([ti, img['file'], img['type'], '', '', '', '', 'oom'])
-                errors += 1
+                    dur  = round(time.time() - t0, 2)
+                    vram = round(torch.cuda.max_memory_allocated() / 1024**3, 2) if torch.cuda.is_available() else ''
+                    try:
+                        import psutil
+                        ram = round(psutil.Process().memory_info().rss / 1024**3, 2)
+                    except Exception:
+                        ram = ''
+
+                    print(f'  done {dur}s  VRAM {vram}GB  RAM {ram}GB  -> {stem}_s{sd}.mp4')
+                    stats_w.writerow([ti, img['file'], img['type'], dur, vram, ram, out_mp4, 'ok'])
+                    generated += 1
 
             except Exception as _exc:
-                # Re-raise fatal errors that will affect every image (auth, missing model, etc.)
-                _exc_type = type(_exc).__name__
-                if _exc_type in ('GatedRepoError', 'RepositoryNotFoundError',
-                                 'LocalEntryNotFoundError', 'EntryNotFoundError'):
-                    _log_done()
-                    raise
-                print(f'\n  [ERROR] {stem}:', file=sys.stderr)
-                traceback.print_exc(file=sys.stderr)
-                stats_w.writerow([ti, img['file'], img['type'], '', '', '', '', 'error'])
-                errors += 1
+                _cause = getattr(_exc, '__cause__', None)
+                _is_oom = isinstance(_exc, torch.cuda.OutOfMemoryError) or isinstance(_cause, torch.cuda.OutOfMemoryError)
+                if not _is_oom:
+                    _exc_type = type(_exc).__name__
+                    if _exc_type in ('GatedRepoError', 'RepositoryNotFoundError',
+                                     'LocalEntryNotFoundError', 'EntryNotFoundError'):
+                        _log_done()
+                        raise
+                    print(f'\n  [ERROR] {stem}:', file=sys.stderr)
+                    traceback.print_exc(file=sys.stderr)
+                    stats_w.writerow([ti, img['file'], img['type'], '', '', '', '', 'error'])
+                    errors += 1
+                else:
+                    print(f'\n  [OOM] clearing cache and skipping {stem}', file=sys.stderr)
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    stats_w.writerow([ti, img['file'], img['type'], '', '', '', '', 'oom'])
+                    errors += 1
 
             finally:
                 shutil.rmtree(tmp_out, ignore_errors=True)

@@ -230,6 +230,7 @@ class WorldFMTriConditionInprocess:
         cond2_index: Optional[int] = None,
         profile: bool = False,
         profile_tag: str = "",
+        seed: Optional[int] = None,
     ) -> torch.Tensor:
         """(H,W,3) uint8 GPU tensor -> decoded (1,3,H,W) in [-1,1]."""
         if self._cond2_cached is None and self._cond2_candidates_tensor is None:
@@ -279,7 +280,8 @@ class WorldFMTriConditionInprocess:
             z_c2 = self._cond2_latent_cached
 
         latent_h, latent_w = z_c1.shape[2], z_c1.shape[3]
-        z = torch.randn(1, 4, latent_h, latent_w, device=self.device, dtype=self.cfg.weight_dtype)
+        _gen = torch.Generator(device=self.device).manual_seed(seed) if seed is not None else None
+        z = torch.randn(1, 4, latent_h, latent_w, device=self.device, dtype=self.cfg.weight_dtype, generator=_gen)
 
         hw = torch.tensor([[float(self.target_hw[0]), float(self.target_hw[1])]], device=self.device, dtype=self.cfg.weight_dtype)
         ar = torch.tensor([[float(self.target_hw[0]) / float(self.target_hw[1])]], device=self.device, dtype=self.cfg.weight_dtype)
@@ -354,6 +356,7 @@ class WorldFMTriConditionInprocess:
         sample_steps: int,
         cfg_scale: float = 4.5,
         cond2_index: Optional[int] = None,
+        seed: Optional[int] = None,
     ) -> torch.Tensor:
         """Multi-step sampling (e.g. 14 steps) via DPM solver."""
         if int(sample_steps) <= 0:
@@ -382,7 +385,8 @@ class WorldFMTriConditionInprocess:
             z_c2 = self._cond2_latent_cached
 
         latent_h, latent_w = z_c1.shape[2], z_c1.shape[3]
-        z = torch.randn(1, 4, latent_h, latent_w, device=self.device, dtype=self.cfg.weight_dtype)
+        _gen = torch.Generator(device=self.device).manual_seed(seed) if seed is not None else None
+        z = torch.randn(1, 4, latent_h, latent_w, device=self.device, dtype=self.cfg.weight_dtype, generator=_gen)
         hw = torch.tensor([[float(self.target_hw[0]), float(self.target_hw[1])]], device=self.device, dtype=self.cfg.weight_dtype)
         ar = torch.tensor([[float(self.target_hw[0]) / float(self.target_hw[1])]], device=self.device, dtype=self.cfg.weight_dtype)
         caption_embs = torch.zeros(1, 1, self.max_sequence_length, 4096, device=self.device, dtype=self.cfg.weight_dtype)
