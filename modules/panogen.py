@@ -107,7 +107,6 @@ class Image2PanoramaDemo:
         try:
             self.pipe.enable_model_cpu_offload()
         except RuntimeError:
-            import torch
             self.pipe.to("cuda" if torch.cuda.is_available() else "cpu")
         self.pipe.enable_vae_tiling()
 
