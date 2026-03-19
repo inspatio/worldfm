@@ -324,7 +324,7 @@ def step4_init(*, cfg=None):
             version=str(wcfg.version),
             disable_cross_attn=True,
             step=(step if step in (1, 2) else 2),
-            mid_t=200, cfg_scale=0.0,
+            mid_t=int(wcfg.mid_t), cfg_scale=0.0,
             device=device_str,
             weight_dtype=torch.float16 if device.type == "cuda" else torch.float32,
         )
@@ -404,6 +404,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="WorldFM inference resolution")
     p.add_argument("--step", type=int, default=d.worldfm.step,
                    help="WorldFM inference steps (1 or 2)", choices=[1, 2])
+    p.add_argument("--mid_t", type=int, default=d.worldfm.mid_t,
+                       help="Intermediate noise timestep for DMD 2-step sampling (default: %(default)s)")
     p.add_argument("--cfg_scale", type=float, default=d.worldfm.cfg_scale,
                    help="CFG scale for multi-step sampling")
     p.add_argument("--gpu_index", type=int, default=d.pipeline.gpu_index,
@@ -431,7 +433,7 @@ def _load_config(args) -> OmegaConf:
         "worldfm": {"model_path": args.model_path,
                      "vae_path": args.vae_path,
                      "image_size": args.image_size, "step": args.step,
-                     "cfg_scale": args.cfg_scale},
+                     "mid_t": args.mid_t, "cfg_scale": args.cfg_scale},
     })
     cfg = OmegaConf.merge(cfg, cli_overrides)
     return cfg

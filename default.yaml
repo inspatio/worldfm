@@ -53,3 +53,4 @@ worldfm:
   image_size: 512
   version: sigma
   cfg_scale: 4.5
+  mid_t: 200

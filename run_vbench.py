@@ -42,6 +42,7 @@ def vbench_batch(
     fps=30,
     step=None,
     cfg_scale=None,
+    mid_t=None,
 ):
     info_json  = os.path.abspath(vbench_info_json or _DEFAULT_INFO_JSON)
     crop_base  = os.path.abspath(crop_dir or _DEFAULT_CROP_DIR)
@@ -94,11 +95,12 @@ def vbench_batch(
 
     # ── load external repos + WorldFM model once ──────────────────────────────
     cfg = _p.DEFAULT_CFG
-    if step is not None or cfg_scale is not None:
+    if step is not None or cfg_scale is not None or mid_t is not None:
         from omegaconf import OmegaConf
         overrides = {}
         if step      is not None: overrides['step']      = step
         if cfg_scale is not None: overrides['cfg_scale'] = cfg_scale
+        if mid_t     is not None: overrides['mid_t']     = mid_t
         cfg = _p.OmegaConf.merge(cfg, _p.OmegaConf.create({'worldfm': overrides}))
 
     _p.setup_external_repos(
