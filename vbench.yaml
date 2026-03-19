@@ -1,0 +1,6 @@
+# WorldFM VBench evaluation config — merged on top of default.yaml
+
+worldfm:
+  image_height: 960
+  image_width: 720
+  step: 2
