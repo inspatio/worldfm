@@ -121,16 +121,16 @@ def vbench_batch(
     image_types='indoor,scenery',
     resolution='1-1',
     crop_dir=None,
-    fps=30,
+    fps=24,
     step=None,
     cfg_scale=None,
     mid_t=None,
     panogen_steps=None,
     interactive=False,
-    num_frames=30,
+    num_frames=161,
     step_deg=5.0,
-    frame_width=960,
-    frame_height=720,
+    frame_width=720,
+    frame_height=960,
     num_seeds=5,
     seed_start=0,
 ):
@@ -178,11 +178,11 @@ def vbench_batch(
     print()
 
     # ── load external repos + WorldFM model once ──────────────────────────────
-    cfg = _p.DEFAULT_CFG
+    _vbench_yaml = str(_WORLDFM_ROOT / 'vbench.yaml')
+    cfg = _p.OmegaConf.merge(_p.DEFAULT_CFG, _p.OmegaConf.load(_vbench_yaml))
     wfm_overrides = {k: v for k, v in [('step', step), ('cfg_scale', cfg_scale), ('mid_t', mid_t)] if v is not None}
     pan_overrides  = {k: v for k, v in [('num_inference_steps', panogen_steps)] if v is not None}
     if wfm_overrides or pan_overrides:
-        from omegaconf import OmegaConf
         patch = {}
         if wfm_overrides: patch['worldfm'] = wfm_overrides
         if pan_overrides:  patch['panogen'] = pan_overrides
