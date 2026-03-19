@@ -104,8 +104,8 @@ def vbench_batch(
     interactive=False,
     num_frames=30,
     step_deg=5.0,
-    frame_width=None,
-    frame_height=None,
+    frame_width=960,
+    frame_height=720,
     num_seeds=5,
     seed_start=0,
 ):
