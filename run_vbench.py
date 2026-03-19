@@ -87,6 +87,32 @@ _DEFAULT_INFO_JSON = str(_VBENCH_ROOT / 'i2v-bench-info.json')
 _DEFAULT_CROP_DIR  = str(_VBENCH_ROOT / 'crop')
 
 
+def _make_K(render_size: int, fov_deg: float = 70.0) -> np.ndarray:
+    """Intrinsic matrix for a square render of side `render_size` with given horizontal FOV."""
+    f = (render_size / 2.0) / np.tan(np.radians(fov_deg / 2.0))
+    c = render_size / 2.0
+    return np.array([[f, 0, c], [0, f, c], [0, 0, 1]], dtype=np.float64)
+
+
+def _make_panorama_trajectory(
+    num_frames: int,
+    seed_idx: int,
+    num_seeds: int,
+    sweep_deg: float = 90.0,
+    pitch_amp_deg: float = 5.0,
+) -> list:
+    """Smooth yaw-sweep trajectory with yaw offset distributed evenly across seeds.
+
+    seed_idx 0..num_seeds-1 each start at yaw = seed_idx * 360/num_seeds degrees,
+    then sweep `sweep_deg` horizontally over `num_frames` frames with a gentle
+    sinusoidal pitch oscillation.
+    """
+    yaw_offset = seed_idx * 2.0 * np.pi / num_seeds
+    yaws   = yaw_offset + np.linspace(0.0, np.radians(sweep_deg), num_frames)
+    pitches = np.radians(pitch_amp_deg) * np.sin(np.linspace(0.0, np.pi, num_frames))
+    return [_c2w_from_yaw_pitch(float(y), float(p)) for y, p in zip(yaws, pitches)]
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 
 def vbench_batch(
@@ -100,7 +126,6 @@ def vbench_batch(
     cfg_scale=None,
     mid_t=None,
     panogen_steps=None,
-    meta=None,
     interactive=False,
     num_frames=30,
     step_deg=5.0,
@@ -126,25 +151,6 @@ def vbench_batch(
         sys.exit(f'[vbench] ERROR: info JSON not found: {info_json}')
     if not os.path.isdir(image_dir):
         sys.exit(f'[vbench] ERROR: crop dir not found: {image_dir}')
-
-    # load demo K / c2w trajectory
-    _meta_path = os.path.abspath(meta) if meta else str(_WORLDFM_ROOT / 'demo' / 'meta.json')
-    with open(_meta_path, encoding='utf-8') as f:
-        _demo = json.load(f)
-    K        = np.asarray(_demo['K'],   dtype=np.float64)
-    _c2w_raw = [np.asarray(c, dtype=np.float64) for c in _demo['c2w']]
-
-    # Interpolate trajectory to num_frames (only needed in non-interactive mode)
-    if not interactive and num_frames != len(_c2w_raw):
-        _src = np.linspace(0, 1, len(_c2w_raw))
-        _dst = np.linspace(0, 1, num_frames)
-        _yaws   = np.array([_yaw_pitch_from_c2w(m)[0] for m in _c2w_raw])
-        _pitches = np.array([_yaw_pitch_from_c2w(m)[1] for m in _c2w_raw])
-        c2w_list = [_c2w_from_yaw_pitch(float(np.interp(t, _src, _yaws)),
-                                         float(np.interp(t, _src, _pitches)))
-                    for t in _dst]
-    else:
-        c2w_list = _c2w_raw
 
     # parse allowed image types (fire may deliver comma-separated value as a tuple)
     if isinstance(image_types, (list, tuple)):
@@ -191,6 +197,9 @@ def vbench_batch(
     print('[vbench] loading WorldFM inference service...')
     svc, wcfg = _p.step4_init(cfg=cfg)
     print('[vbench] WorldFM ready\n')
+
+    _render_size = int(cfg.render.render_size)
+    K = _make_K(_render_size)
 
     generated = errors = skipped = 0
     t_start = time.time()
@@ -270,46 +279,14 @@ def vbench_batch(
 
                 if interactive:
                     _key_held, _key_stop = _start_key_listener()
-                    _yaw, _pitch = _yaw_pitch_from_c2w(np.array(c2w_list[0]))
+                    _yaw0, _pitch0 = 0.0, 0.0
                     _step_r = np.radians(step_deg)
                     print(f'  [interactive] WASD to steer  ({num_frames} frames, {step_deg}°/frame)')
 
-                _total_frames = num_frames if interactive else len(c2w_list)
+                _total_frames = num_frames
 
-                # Pre-render all frames once (deterministic); reuse across seeds
-                _step('render-frames')
-                ts = time.time()
-                rendered_frames = []
-                _poses = range(num_frames) if interactive else range(len(c2w_list))
-                for fi in _poses:
-                    if interactive:
-                        if 'a' in _key_held: _yaw   -= _step_r
-                        if 'd' in _key_held: _yaw   += _step_r
-                        if 'w' in _key_held: _pitch += _step_r
-                        if 's' in _key_held: _pitch -= _step_r
-                        _pitch = float(np.clip(_pitch, -np.pi / 2 + 0.05, np.pi / 2 - 0.05))
-                        c2w = _c2w_from_yaw_pitch(_yaw, _pitch)
-                    else:
-                        c2w = c2w_list[fi]
-                    try:
-                        render_u8, cond_nearest = _p.step3_render_one(
-                            renderer, cond_db, pp_result, K, c2w,
-                            rcfg=rcfg, render_size=S,
-                        )
-                    except Exception as _fe:
-                        raise RuntimeError(f'frame {fi+1}/{_total_frames}: render failed') from _fe
-                    rendered_frames.append((render_u8, cond_nearest))
-                _finish_step(ts)
-
-                if interactive:
-                    _key_stop()
-
-                del renderer, cond_db
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-
-                # Run inference for each seed
-                for sd in seeds:
+                # Run render + inference for each seed (different trajectory per seed)
+                for sd_idx, sd in enumerate(seeds):
                     out_mp4 = os.path.join(out_dir, f'{stem}_s{sd}.mp4')
                     if os.path.exists(out_mp4):
                         print(f'  [seed {sd}] already done, skipping')
@@ -317,12 +294,36 @@ def vbench_batch(
                         skipped += 1
                         continue
 
-                    print(f'  [infer seed={sd}] 0/{_total_frames} frames ...', flush=True)
+                    if interactive:
+                        _yaw, _pitch = _yaw0, _pitch0
+                        c2w_list_sd = None   # built frame by frame below
+                    else:
+                        c2w_list_sd = _make_panorama_trajectory(
+                            num_frames, sd_idx, len(seeds),
+                        )
+
+                    _step(f'render+infer seed={sd}')
                     ts = time.time()
                     frames = []
                     _frame_times = []
-                    for fi, (render_u8, cond_nearest) in enumerate(rendered_frames):
+                    for fi in range(_total_frames):
                         _tf = time.time()
+                        if interactive:
+                            if 'a' in _key_held: _yaw   -= _step_r
+                            if 'd' in _key_held: _yaw   += _step_r
+                            if 'w' in _key_held: _pitch += _step_r
+                            if 's' in _key_held: _pitch -= _step_r
+                            _pitch = float(np.clip(_pitch, -np.pi / 2 + 0.05, np.pi / 2 - 0.05))
+                            c2w = _c2w_from_yaw_pitch(_yaw, _pitch)
+                        else:
+                            c2w = c2w_list_sd[fi]
+                        try:
+                            render_u8, cond_nearest = _p.step3_render_one(
+                                renderer, cond_db, pp_result, K, c2w,
+                                rcfg=rcfg, render_size=S,
+                            )
+                        except Exception as _fe:
+                            raise RuntimeError(f'seed {sd} frame {fi+1}/{_total_frames}: render failed') from _fe
                         try:
                             frame = _p.step4_infer_one(svc, render_u8, cond_nearest, wcfg=wcfg, seed=sd * 1000 + fi)
                         except Exception as _fe:
@@ -332,8 +333,13 @@ def vbench_batch(
                         _avg = sum(_frame_times) / len(_frame_times)
                         _eta_s = int(_avg * (_total_frames - fi - 1))
                         _vram = f'  VRAM {torch.cuda.memory_allocated()/1024**3:.1f}GB' if torch.cuda.is_available() else ''
-                        print(f'\r  [infer {fi+1}/{_total_frames}  {_frame_times[-1]:.1f}s/frame  ETA {_eta_s}s{_vram}]  ',
-                              end='', flush=True)
+                        if interactive:
+                            _keys_str = ''.join(k for k in ('w', 'a', 's', 'd') if k in _key_held) or '-'
+                            print(f'\r  [infer {fi+1}/{_total_frames}  {_frame_times[-1]:.1f}s/frame  ETA {_eta_s}s{_vram}  yaw={np.degrees(_yaw):.0f}°  keys={_keys_str}]  ',
+                                  end='', flush=True)
+                        else:
+                            print(f'\r  [infer {fi+1}/{_total_frames}  {_frame_times[-1]:.1f}s/frame  ETA {_eta_s}s{_vram}]  ',
+                                  end='', flush=True)
                     print()
                     _finish_step(ts)
 
@@ -360,6 +366,12 @@ def vbench_batch(
                     print(f'  done {dur}s  VRAM {vram}GB  RAM {ram}GB  -> {stem}_s{sd}.mp4')
                     stats_w.writerow([ti, img['file'], img['type'], dur, vram, ram, out_mp4, 'ok'])
                     generated += 1
+
+                if interactive:
+                    _key_stop()
+                del renderer, cond_db
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
             except Exception as _exc:
                 _cause = getattr(_exc, '__cause__', None)
