@@ -18,9 +18,9 @@ if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
 rem Clean corrupted ~orch dist-info left by failed torch installs
 for /d %%D in (".venv\Lib\site-packages\~*") do rmdir /s /q "%%D" 2>nul
 
-rem Fix basicsr: uninstall broken original, install patched fork
+rem Fix basicsr: uninstall broken original, install patched fork (--no-deps to avoid clobbering torch)
 python -m pip uninstall basicsr -y -q 2>nul
-python -m pip install basicsr-fixed -q
+python -m pip install basicsr-fixed --no-deps -q
 if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
 
 python -m pip install -r requirements.txt --no-build-isolation -q
@@ -28,6 +28,18 @@ if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
 
 rem Reinstall torch+xformers after requirements.txt to ensure consistent versions
 python -m pip install torch torchvision torchaudio xformers --index-url https://download.pytorch.org/whl/cu128 -q
+if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
+
+rem Install Real-ESRGAN submodule (generates version.py via setup.py develop)
+if not exist submodules\Real-ESRGAN\realesrgan\version.py (
+    pushd submodules\Real-ESRGAN
+    python setup.py develop -q
+    if %ERRORLEVEL% neq 0 ( popd & exit /b %ERRORLEVEL% )
+    popd
+)
+
+rem Install ZIM submodule
+python -m pip install -e submodules\ZIM -q
 if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
 
 rem Patch basicsr degradations.py: functional_tensor was removed in torchvision 0.17+

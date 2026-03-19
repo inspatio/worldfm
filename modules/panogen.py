@@ -104,7 +104,11 @@ class Image2PanoramaDemo:
         )
         self.pipe.fuse_lora()
         self.pipe.unload_lora_weights()
-        self.pipe.enable_model_cpu_offload()
+        try:
+            self.pipe.enable_model_cpu_offload()
+        except RuntimeError:
+            import torch
+            self.pipe.to("cuda" if torch.cuda.is_available() else "cpu")
         self.pipe.enable_vae_tiling()
 
         self.general_negative_prompt = (
