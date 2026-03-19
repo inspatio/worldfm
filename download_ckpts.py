@@ -33,9 +33,8 @@ def parse_args() -> argparse.Namespace:
                     help="Branch or tag to download from (default: main)")
     p.add_argument("--token", type=str, default=None,
                     help="HuggingFace token (or set HF_TOKEN env var)")
-    p.add_argument("--flux", action="store_true",
-                    help=f"Also download {FLUX_REPO_ID} into the HF cache "
-                         "(gated — requires HF login and accepted licence)")
+    p.add_argument("--no-flux", action="store_true",
+                    help=f"Skip downloading {FLUX_REPO_ID}")
     return p.parse_args()
 
 
@@ -78,7 +77,7 @@ def main() -> None:
 
     print(f"\nAll weights ready at {dest}")
 
-    if args.flux:
+    if not args.no_flux:
         _download_flux(args.token)
 
 
