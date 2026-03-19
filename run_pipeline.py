@@ -124,6 +124,7 @@ def step1_panogen(image_path: str, output_dir: Path, *, cfg=None):
         cache = bool(pcfg.cache)
 
     demo = Image2PanoramaDemo(_Args())
+    demo.num_inference_steps = int(pcfg.num_inference_steps)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     pano_img = demo.run(

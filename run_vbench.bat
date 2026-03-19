@@ -72,4 +72,9 @@ if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
 rem ── 10. Run vbench ─────────────────────────────────────────────────────────
 python run_vbench.py vbench ^
     --output_dir results_vbench/videos ^
-    --image_types "indoor,scenery"
+    --image_types "indoor,scenery" ^
+    --num_frames 161 ^
+    --fps 24 ^
+    --frame_width 720 ^
+    --frame_height 960 ^
+    --panogen_steps 5

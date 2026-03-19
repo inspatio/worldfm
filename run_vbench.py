@@ -99,9 +99,12 @@ def vbench_batch(
     step=None,
     cfg_scale=None,
     mid_t=None,
+    panogen_steps=None,
     interactive=False,
     num_frames=30,
     step_deg=5.0,
+    frame_width=None,
+    frame_height=None,
 ):
     info_json  = os.path.abspath(vbench_info_json or _DEFAULT_INFO_JSON)
     crop_base  = os.path.abspath(crop_dir or _DEFAULT_CROP_DIR)
@@ -125,7 +128,19 @@ def vbench_batch(
     with open(_WORLDFM_ROOT / 'demo' / 'meta.json', encoding='utf-8') as f:
         _demo = json.load(f)
     K        = np.asarray(_demo['K'],   dtype=np.float64)
-    c2w_list = [np.asarray(c, dtype=np.float64) for c in _demo['c2w']]
+    _c2w_raw = [np.asarray(c, dtype=np.float64) for c in _demo['c2w']]
+
+    # Interpolate trajectory to num_frames (only needed in non-interactive mode)
+    if not interactive and num_frames != len(_c2w_raw):
+        _src = np.linspace(0, 1, len(_c2w_raw))
+        _dst = np.linspace(0, 1, num_frames)
+        _yaws   = np.array([_yaw_pitch_from_c2w(m)[0] for m in _c2w_raw])
+        _pitches = np.array([_yaw_pitch_from_c2w(m)[1] for m in _c2w_raw])
+        c2w_list = [_c2w_from_yaw_pitch(float(np.interp(t, _src, _yaws)),
+                                         float(np.interp(t, _src, _pitches)))
+                    for t in _dst]
+    else:
+        c2w_list = _c2w_raw
 
     # parse allowed image types (fire may deliver comma-separated value as a tuple)
     if isinstance(image_types, (list, tuple)):
@@ -154,13 +169,14 @@ def vbench_batch(
 
     # ── load external repos + WorldFM model once ──────────────────────────────
     cfg = _p.DEFAULT_CFG
-    if step is not None or cfg_scale is not None or mid_t is not None:
+    wfm_overrides = {k: v for k, v in [('step', step), ('cfg_scale', cfg_scale), ('mid_t', mid_t)] if v is not None}
+    pan_overrides  = {k: v for k, v in [('num_inference_steps', panogen_steps)] if v is not None}
+    if wfm_overrides or pan_overrides:
         from omegaconf import OmegaConf
-        overrides = {}
-        if step      is not None: overrides['step']      = step
-        if cfg_scale is not None: overrides['cfg_scale'] = cfg_scale
-        if mid_t     is not None: overrides['mid_t']     = mid_t
-        cfg = _p.OmegaConf.merge(cfg, _p.OmegaConf.create({'worldfm': overrides}))
+        patch = {}
+        if wfm_overrides: patch['worldfm'] = wfm_overrides
+        if pan_overrides:  patch['panogen'] = pan_overrides
+        cfg = _p.OmegaConf.merge(cfg, _p.OmegaConf.create(patch))
 
     _p.setup_external_repos(
         hw_path=str(cfg.submodules.hw_path),
@@ -274,10 +290,15 @@ def vbench_batch(
 
                 # save video
                 h, w = frames[0].shape[:2]
+                out_w = frame_width  or w
+                out_h = frame_height or h
                 fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-                vw = cv2.VideoWriter(out_mp4, fourcc, fps, (w, h))
+                vw = cv2.VideoWriter(out_mp4, fourcc, fps, (out_w, out_h))
                 for fr in frames:
-                    vw.write(cv2.cvtColor(fr, cv2.COLOR_RGB2BGR))
+                    bgr = cv2.cvtColor(fr, cv2.COLOR_RGB2BGR)
+                    if (out_w, out_h) != (w, h):
+                        bgr = cv2.resize(bgr, (out_w, out_h), interpolation=cv2.INTER_LANCZOS4)
+                    vw.write(bgr)
                 vw.release()
 
                 dur  = round(time.time() - t0, 2)
