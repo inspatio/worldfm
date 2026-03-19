@@ -22,9 +22,9 @@ import os
 import sys
 from pathlib import Path
 
-# Disable xformers memory-efficient attention — its CUDA kernels don't support
-# compute capability >= 12.0 (Blackwell / RTX 5090).  DINOv2 in MoGe checks
-# this env var at import time and falls back to standard attention.
+# Disable xformers on GPUs whose compute capability exceeds what the installed
+# xformers kernels support (fa3/cutlass require <= sm_90; Blackwell is sm_120).
+# DINOv2 checks XFORMERS_DISABLED at import time and falls back to standard attn.
 os.environ.setdefault("XFORMERS_DISABLED", "1")
 
 import cv2
