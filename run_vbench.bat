@@ -30,6 +30,10 @@ rem Reinstall torch+xformers after requirements.txt to ensure consistent version
 python -m pip install torch torchvision torchaudio xformers --index-url https://download.pytorch.org/whl/cu128 -q
 if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
 
+rem Patch basicsr degradations.py: functional_tensor was removed in torchvision 0.17+
+python -c "import pathlib,shutil; p=pathlib.Path('.venv/Lib/site-packages/basicsr/data/degradations.py'); t=p.read_text(encoding='utf-8'); fixed=t.replace('from torchvision.transforms.functional_tensor import rgb_to_grayscale','from torchvision.transforms.functional import rgb_to_grayscale'); p.write_text(fixed,encoding='utf-8'); c=p.parent/'__pycache__'; [f.unlink() for f in c.glob('degradations*.pyc')] if c.exists() else None; print('basicsr patch applied' if fixed!=t else 'basicsr already patched')"
+if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
+
 python download_ckpts.py
 if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
 
