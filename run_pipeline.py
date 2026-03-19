@@ -22,6 +22,11 @@ import os
 import sys
 from pathlib import Path
 
+# Disable xformers memory-efficient attention — its CUDA kernels don't support
+# compute capability >= 12.0 (Blackwell / RTX 5090).  DINOv2 in MoGe checks
+# this env var at import time and falls back to standard attention.
+os.environ.setdefault("XFORMERS_DISABLED", "1")
+
 import cv2
 import numpy as np
 import torch
@@ -104,7 +109,7 @@ def setup_external_repos(*, hw_path: str = "", moge_path: str = "") -> None:
 
 # ============================== Step 1 =======================================
 
-def step1_panogen(image_path: str, output_dir: Path, *, cfg=None):
+def step1_panogen(image_path: str, output_dir: Path, *, cfg=None, prompt: str = ""):
     """Perspective image -> panorama (PIL Image).
 
     Returns PIL.Image.Image (panorama).
@@ -128,7 +133,7 @@ def step1_panogen(image_path: str, output_dir: Path, *, cfg=None):
 
     output_dir.mkdir(parents=True, exist_ok=True)
     pano_img = demo.run(
-        prompt="",
+        prompt=prompt,
         negative_prompt="",
         image_path=str(image_path),
         seed=int(pcfg.seed),
@@ -307,6 +312,8 @@ def step4_init(*, cfg=None):
     model_path = str(wcfg.model_path)
     vae_path = str(wcfg.vae_path)
     image_size = int(wcfg.image_size)
+    image_height = int(getattr(wcfg, "image_height", image_size))
+    image_width = int(getattr(wcfg, "image_width", image_size))
     step = int(wcfg.step)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -322,6 +329,8 @@ def step4_init(*, cfg=None):
             model_path=str(model_p),
             vae_path=str(vae_p),
             image_size=image_size,
+            image_height=image_height,
+            image_width=image_width,
             version=str(wcfg.version),
             disable_cross_attn=True,
             step=(step if step in (1, 2) else 2),
@@ -402,7 +411,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--vae_path", type=str, default=d.worldfm.vae_path,
                    help="Path to VAE directory (AutoencoderKL)")
     p.add_argument("--image_size", type=int, default=d.worldfm.image_size,
-                   help="WorldFM inference resolution")
+                   help="WorldFM inference resolution (square, overridden by --image_height/--image_width)")
+    p.add_argument("--image_height", type=int, default=None,
+                   help="WorldFM output height in pixels (overrides --image_size)")
+    p.add_argument("--image_width", type=int, default=None,
+                   help="WorldFM output width in pixels (overrides --image_size)")
     p.add_argument("--step", type=int, default=d.worldfm.step,
                    help="WorldFM inference steps (1 or 2)", choices=[1, 2])
     p.add_argument("--mid_t", type=int, default=d.worldfm.mid_t,
@@ -433,7 +446,10 @@ def _load_config(args) -> OmegaConf:
         "render": {"render_size": args.render_size},
         "worldfm": {"model_path": args.model_path,
                      "vae_path": args.vae_path,
-                     "image_size": args.image_size, "step": args.step,
+                     "image_size": args.image_size,
+                     "image_height": args.image_height if args.image_height is not None else args.image_size,
+                     "image_width": args.image_width if args.image_width is not None else args.image_size,
+                     "step": args.step,
                      "mid_t": args.mid_t, "cfg_scale": args.cfg_scale},
     })
     cfg = OmegaConf.merge(cfg, cli_overrides)

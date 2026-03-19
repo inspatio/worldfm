@@ -32,7 +32,7 @@ moge:
 
 # ─── Step 3: Condition rendering & view selection ────────────────────────────
 render:
-  render_size: 512
+  render_size: 960
   sample_grid: 10
   center_grid: 15
   center_frac: 0.5
@@ -52,6 +52,8 @@ worldfm:
   model_path: weights/worldfm_${worldfm.step}-step.pth
   vae_path: weights/vae
   image_size: 512
+  image_height: 720
+  image_width: 960
   version: sigma
   cfg_scale: 4.5
   mid_t: 200

@@ -1,6 +1,9 @@
 wheel
 packaging
 setuptools
+torch==2.10.0+cu128 --index-url https://download.pytorch.org/whl/cu128
+torchvision --index-url https://download.pytorch.org/whl/cu128
+torchaudio --index-url https://download.pytorch.org/whl/cu128
 absl-py>=2.2.2
 accelerate>=1.6.0
 addict>=2.4.0

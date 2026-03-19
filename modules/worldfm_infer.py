@@ -93,6 +93,8 @@ class WorldFMInprocessConfig:
     model_path: str
     vae_path: str
     image_size: int = 512
+    image_height: int = 0   # 0 → falls back to image_size
+    image_width: int = 0    # 0 → falls back to image_size
     version: str = "sigma"
     disable_cross_attn: bool = True
     step: int = 2
@@ -113,7 +115,9 @@ class WorldFMTriConditionInprocess:
     def __init__(self, cfg: WorldFMInprocessConfig) -> None:
         self.cfg = cfg
         self.device = torch.device(cfg.device)
-        self.target_hw = (int(cfg.image_size), int(cfg.image_size))
+        _h = int(cfg.image_height) if cfg.image_height else int(cfg.image_size)
+        _w = int(cfg.image_width) if cfg.image_width else int(cfg.image_size)
+        self.target_hw = (_h, _w)
 
         max_sequence_length = {"alpha": 120, "sigma": 300}[cfg.version]
         latent_size = int(cfg.image_size // 8)

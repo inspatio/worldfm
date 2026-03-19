@@ -238,17 +238,26 @@ def vbench_batch(
 
                 _step('panogen')
                 ts = time.time()
-                panorama_img = _p.step1_panogen(image_path, tmp_out, cfg=cfg)
+                try:
+                    panorama_img = _p.step1_panogen(image_path, tmp_out, cfg=cfg, prompt=stem)
+                except Exception as _e:
+                    raise RuntimeError(f'panogen failed: {_e}') from _e
                 _finish_step(ts)
 
                 _step('moge')
                 ts = time.time()
-                pp_result = _p.step2_moge_pipeline(panorama_img, tmp_out, cfg=cfg)
+                try:
+                    pp_result = _p.step2_moge_pipeline(panorama_img, tmp_out, cfg=cfg)
+                except Exception as _e:
+                    raise RuntimeError(f'moge failed: {_e}') from _e
                 _finish_step(ts)
 
                 _step('renderer')
                 ts = time.time()
-                renderer, cond_db, rcfg, S = _p.step3_init(pp_result, cfg=cfg)
+                try:
+                    renderer, cond_db, rcfg, S = _p.step3_init(pp_result, cfg=cfg)
+                except Exception as _e:
+                    raise RuntimeError(f'renderer failed: {_e}') from _e
                 _finish_step(ts)
 
                 if interactive:
@@ -257,11 +266,14 @@ def vbench_batch(
                     _step_r = np.radians(step_deg)
                     print(f'  [interactive] WASD to steer  ({num_frames} frames, {step_deg}°/frame)')
 
-                _step(f'infer x{num_frames if interactive else len(c2w_list)}')
+                _total_frames = num_frames if interactive else len(c2w_list)
+                print(f'  [infer] 0/{_total_frames} frames ...', flush=True)
                 ts = time.time()
                 frames = []
+                _frame_times = []
                 _poses = range(num_frames) if interactive else range(len(c2w_list))
                 for fi in _poses:
+                    _tf = time.time()
                     if interactive:
                         if 'a' in _key_held: _yaw   -= _step_r
                         if 'd' in _key_held: _yaw   += _step_r
@@ -269,18 +281,32 @@ def vbench_batch(
                         if 's' in _key_held: _pitch -= _step_r
                         _pitch = float(np.clip(_pitch, -np.pi / 2 + 0.05, np.pi / 2 - 0.05))
                         c2w = _c2w_from_yaw_pitch(_yaw, _pitch)
-                        _keys_str = ''.join(k for k in ('w', 'a', 's', 'd') if k in _key_held) or '-'
-                        print(f'\r  [infer {fi+1}/{num_frames}  yaw={np.degrees(_yaw):.1f}°  pitch={np.degrees(_pitch):.1f}°  keys={_keys_str}]',
-                              end='', flush=True)
                     else:
                         c2w = c2w_list[fi]
-                        print(f'\r  [infer {fi+1}/{len(c2w_list)}]', end='', flush=True)
-                    render_u8, cond_nearest = _p.step3_render_one(
-                        renderer, cond_db, pp_result, K, c2w,
-                        rcfg=rcfg, render_size=S,
-                    )
-                    frame = _p.step4_infer_one(svc, render_u8, cond_nearest, wcfg=wcfg)
+                    try:
+                        render_u8, cond_nearest = _p.step3_render_one(
+                            renderer, cond_db, pp_result, K, c2w,
+                            rcfg=rcfg, render_size=S,
+                        )
+                    except Exception as _fe:
+                        raise RuntimeError(f'frame {fi+1}/{_total_frames}: render failed') from _fe
+                    try:
+                        frame = _p.step4_infer_one(svc, render_u8, cond_nearest, wcfg=wcfg)
+                    except Exception as _fe:
+                        raise RuntimeError(f'frame {fi+1}/{_total_frames}: WorldFM inference failed') from _fe
                     frames.append(frame)
+                    _frame_times.append(time.time() - _tf)
+                    _avg = sum(_frame_times) / len(_frame_times)
+                    _eta_s = int(_avg * (_total_frames - fi - 1))
+                    _vram = f'  VRAM {torch.cuda.memory_allocated()/1024**3:.1f}GB' if torch.cuda.is_available() else ''
+                    if interactive:
+                        _keys_str = ''.join(k for k in ('w', 'a', 's', 'd') if k in _key_held) or '-'
+                        print(f'\r  [infer {fi+1}/{_total_frames}  {_frame_times[-1]:.1f}s/frame  ETA {_eta_s}s{_vram}  yaw={np.degrees(_yaw):.0f}°  keys={_keys_str}]  ',
+                              end='', flush=True)
+                    else:
+                        print(f'\r  [infer {fi+1}/{_total_frames}  {_frame_times[-1]:.1f}s/frame  ETA {_eta_s}s{_vram}]  ',
+                              end='', flush=True)
+                print()
 
                 if interactive:
                     _key_stop()
