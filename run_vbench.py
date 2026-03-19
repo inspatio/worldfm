@@ -216,7 +216,13 @@ def vbench_batch(
                 stats_w.writerow([ti, img['file'], img['type'], '', '', '', '', 'oom'])
                 errors += 1
 
-            except Exception:
+            except Exception as _exc:
+                # Re-raise fatal errors that will affect every image (auth, missing model, etc.)
+                _exc_type = type(_exc).__name__
+                if _exc_type in ('GatedRepoError', 'RepositoryNotFoundError',
+                                 'LocalEntryNotFoundError', 'EntryNotFoundError'):
+                    _log_done()
+                    raise
                 print(f'\n  [ERROR] {stem}:', file=sys.stderr)
                 traceback.print_exc(file=sys.stderr)
                 stats_w.writerow([ti, img['file'], img['type'], '', '', '', '', 'error'])

@@ -6,10 +6,14 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from huggingface_hub import hf_hub_download
+import os
+
+from huggingface_hub import hf_hub_download, snapshot_download
 
 REPO_ID = "inspatio/worldfm"
 WEIGHTS_DIR = Path(__file__).resolve().parent / "weights"
+
+FLUX_REPO_ID = "black-forest-labs/FLUX.1-Fill-dev"
 
 FILES = [
     "worldfm_1-step.pth",
@@ -29,7 +33,22 @@ def parse_args() -> argparse.Namespace:
                     help="Branch or tag to download from (default: main)")
     p.add_argument("--token", type=str, default=None,
                     help="HuggingFace token (or set HF_TOKEN env var)")
+    p.add_argument("--flux", action="store_true",
+                    help=f"Also download {FLUX_REPO_ID} into the HF cache "
+                         "(gated — requires HF login and accepted licence)")
     return p.parse_args()
+
+
+def _download_flux(token: str | None) -> None:
+    print(f"\nDownloading {FLUX_REPO_ID} into HF cache …")
+    print("  (this is a ~25 GB model — make sure you have accepted the licence at")
+    print(f"   https://huggingface.co/{FLUX_REPO_ID} )\n")
+    snapshot_download(
+        repo_id=FLUX_REPO_ID,
+        token=token or os.environ.get("HF_TOKEN"),
+        ignore_patterns=["*.gguf"],
+    )
+    print(f"  ✓ {FLUX_REPO_ID} cached")
 
 
 def main() -> None:
@@ -58,6 +77,9 @@ def main() -> None:
         print(" done")
 
     print(f"\nAll weights ready at {dest}")
+
+    if args.flux:
+        _download_flux(args.token)
 
 
 if __name__ == "__main__":
