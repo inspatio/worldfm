@@ -27,6 +27,7 @@ diffusers==0.34.0
 easydict>=1.9
 einops>=0.4.1
 executing>=2.2.0
+basicsr-fixed
 facexlib>=0.3.0
 filterpy>=1.4.5
 #flash-attn>=2.7.4.post1
