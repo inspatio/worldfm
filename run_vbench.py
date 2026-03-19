@@ -25,6 +25,62 @@ import torch
 
 import run_pipeline as _p
 
+
+# ── interactive camera helpers ────────────────────────────────────────────────
+
+def _start_key_listener():
+    """Start a non-blocking pynput listener; returns (held_set, stop_fn)."""
+    from pynput.keyboard import Listener
+    held = set()
+
+    def on_press(key):
+        try:
+            held.add(key.char.lower())
+        except AttributeError:
+            held.add(key)
+
+    def on_release(key):
+        try:
+            held.discard(key.char.lower())
+        except AttributeError:
+            held.discard(key)
+
+    listener = Listener(on_press=on_press, on_release=on_release, daemon=True)
+    listener.start()
+    return held, listener.stop
+
+
+def _c2w_from_yaw_pitch(yaw: float, pitch: float) -> np.ndarray:
+    """Camera-to-world matrix (camera at origin) for given yaw/pitch angles.
+
+    yaw   — horizontal rotation (radians, 0 = looking in +Z)
+    pitch — vertical tilt      (radians, 0 = horizontal, + = up)
+    """
+    fwd = np.array([np.sin(yaw) * np.cos(pitch),
+                    -np.sin(pitch),
+                    np.cos(yaw) * np.cos(pitch)])
+    world_up = np.array([0., 1., 0.])
+    right = np.cross(world_up, fwd)
+    norm = np.linalg.norm(right)
+    if norm < 1e-6:           # looking straight up/down — keep last right
+        right = np.array([1., 0., 0.])
+    else:
+        right /= norm
+    up = np.cross(fwd, right)
+    c2w = np.eye(4)
+    c2w[:3, 0] = right
+    c2w[:3, 1] = up
+    c2w[:3, 2] = fwd
+    return c2w
+
+
+def _yaw_pitch_from_c2w(c2w: np.ndarray):
+    """Extract yaw and pitch from a c2w rotation matrix."""
+    fwd = c2w[:3, 2]
+    yaw   = np.arctan2(float(fwd[0]), float(fwd[2]))
+    pitch = np.arcsin(np.clip(-float(fwd[1]), -1.0, 1.0))
+    return yaw, pitch
+
 _WORLDFM_ROOT      = _p.WORLDFM_ROOT
 _VBENCH_ROOT       = _WORLDFM_ROOT.parent / 'VBench' / 'vbench2_beta_i2v' / 'vbench2_beta_i2v' / 'data'
 _DEFAULT_INFO_JSON = str(_VBENCH_ROOT / 'i2v-bench-info.json')
@@ -43,6 +99,9 @@ def vbench_batch(
     step=None,
     cfg_scale=None,
     mid_t=None,
+    interactive=False,
+    num_frames=30,
+    step_deg=5.0,
 ):
     info_json  = os.path.abspath(vbench_info_json or _DEFAULT_INFO_JSON)
     crop_base  = os.path.abspath(crop_dir or _DEFAULT_CROP_DIR)
@@ -174,17 +233,39 @@ def vbench_batch(
                 renderer, cond_db, rcfg, S = _p.step3_init(pp_result, cfg=cfg)
                 _finish_step(ts)
 
-                _step(f'infer x{len(c2w_list)}')
+                if interactive:
+                    _key_held, _key_stop = _start_key_listener()
+                    _yaw, _pitch = _yaw_pitch_from_c2w(np.array(c2w_list[0]))
+                    _step_r = np.radians(step_deg)
+                    print(f'  [interactive] WASD to steer  ({num_frames} frames, {step_deg}°/frame)')
+
+                _step(f'infer x{num_frames if interactive else len(c2w_list)}')
                 ts = time.time()
                 frames = []
-                for fi, c2w in enumerate(c2w_list):
+                _poses = range(num_frames) if interactive else range(len(c2w_list))
+                for fi in _poses:
+                    if interactive:
+                        if 'a' in _key_held: _yaw   -= _step_r
+                        if 'd' in _key_held: _yaw   += _step_r
+                        if 'w' in _key_held: _pitch += _step_r
+                        if 's' in _key_held: _pitch -= _step_r
+                        _pitch = float(np.clip(_pitch, -np.pi / 2 + 0.05, np.pi / 2 - 0.05))
+                        c2w = _c2w_from_yaw_pitch(_yaw, _pitch)
+                        _keys_str = ''.join(k for k in ('w', 'a', 's', 'd') if k in _key_held) or '-'
+                        print(f'\r  [infer {fi+1}/{num_frames}  yaw={np.degrees(_yaw):.1f}°  pitch={np.degrees(_pitch):.1f}°  keys={_keys_str}]',
+                              end='', flush=True)
+                    else:
+                        c2w = c2w_list[fi]
+                        print(f'\r  [infer {fi+1}/{len(c2w_list)}]', end='', flush=True)
                     render_u8, cond_nearest = _p.step3_render_one(
                         renderer, cond_db, pp_result, K, c2w,
                         rcfg=rcfg, render_size=S,
                     )
                     frame = _p.step4_infer_one(svc, render_u8, cond_nearest, wcfg=wcfg)
                     frames.append(frame)
-                    print(f'\r  [infer {fi+1}/{len(c2w_list)}]', end='', flush=True)
+
+                if interactive:
+                    _key_stop()
                 _finish_step(ts)
 
                 del renderer, cond_db
