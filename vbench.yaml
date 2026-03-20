@@ -51,7 +51,7 @@ worldfm:
   model_path: C:/Users/horde/code/worldfm/weights/worldfm_2-step.pth
   vae_path: C:/Users/horde/code/worldfm/weights/vae
   image_size: 512
-  image_width: 960
-  image_height: 720
+  image_width: 720
+  image_height: 960
   version: sigma
   cfg_scale: 4.5

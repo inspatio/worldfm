@@ -75,6 +75,6 @@ python run_vbench.py vbench ^
     --image_types "indoor,scenery" ^
     --num_frames 161 ^
     --fps 24 ^
-    --frame_width 720 ^
-    --frame_height 960 ^
-    --panogen_steps 5
+    --frame_width 1440 ^
+    --frame_height 1920 ^
+    --panogen_steps 20

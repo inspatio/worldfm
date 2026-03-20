@@ -235,6 +235,10 @@ def vbench_batch(
                 stats_f.flush()
                 continue
 
+            # Load VBench prompt image as the appearance reference (cond2) for WorldFM
+            _bgr = cv2.imread(image_path)
+            prompt_img_rgb = cv2.cvtColor(_bgr, cv2.COLOR_BGR2RGB)
+
             out_mp4s = [os.path.join(out_dir, f'{stem}_s{sd}.mp4') for sd in seeds]
             if all(os.path.exists(p) for p in out_mp4s):
                 print(f'[vbench] skip {ti+1}/{total}: all seeds done - {stem}')
@@ -330,7 +334,7 @@ def vbench_batch(
                         except Exception as _fe:
                             raise RuntimeError(f'seed {sd} frame {fi+1}/{_total_frames}: render failed') from _fe
                         try:
-                            frame = _p.step4_infer_one(svc, render_u8, cond_nearest, wcfg=wcfg, seed=sd * 1000 + fi)
+                            frame = _p.step4_infer_one(svc, render_u8, prompt_img_rgb, wcfg=wcfg, seed=sd * 1000 + fi)
                         except Exception as _fe:
                             raise RuntimeError(f'seed {sd} frame {fi+1}/{_total_frames}: WorldFM inference failed') from _fe
                         frames.append(frame)
