@@ -169,7 +169,7 @@ def vbench_batch(
         if allowed and e.get('type') not in allowed:
             continue
         seen.add(fn)
-        images.append({'file': fn, 'type': e.get('type', '')})
+        images.append({'file': fn, 'type': e.get('type', ''), 'caption': e.get('caption', Path(fn).stem)})
 
     total = len(images)
     print(f'\n[vbench] {total} images  (types: {image_types}  resolution: {resolution})')
@@ -261,7 +261,7 @@ def vbench_batch(
                 _step('panogen')
                 ts = time.time()
                 try:
-                    panorama_img = _p.step1_panogen(image_path, tmp_out, cfg=cfg, prompt=stem, demo=panogen_demo)
+                    panorama_img = _p.step1_panogen(image_path, tmp_out, cfg=cfg, prompt=img['caption'], demo=panogen_demo)
                 except Exception as _e:
                     raise RuntimeError(f'panogen failed: {_e}') from _e
                 _finish_step(ts)
