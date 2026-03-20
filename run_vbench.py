@@ -126,6 +126,7 @@ def vbench_batch(
     cfg_scale=None,
     mid_t=None,
     panogen_steps=None,
+    panogen_seed=None,
     interactive=False,
     num_frames=161,
     step_deg=5.0,
@@ -180,8 +181,12 @@ def vbench_batch(
     # ── load external repos + WorldFM model once ──────────────────────────────
     _vbench_yaml = str(_WORLDFM_ROOT / 'vbench.yaml')
     cfg = _p.OmegaConf.load(_vbench_yaml)
+    import random
+    _pan_seed = panogen_seed if panogen_seed is not None else random.randint(0, 2**31 - 1)
+    print(f'[vbench] panogen_seed={_pan_seed}')
+
     wfm_overrides = {k: v for k, v in [('step', step), ('cfg_scale', cfg_scale), ('mid_t', mid_t)] if v is not None}
-    pan_overrides  = {k: v for k, v in [('num_inference_steps', panogen_steps)] if v is not None}
+    pan_overrides  = {k: v for k, v in [('num_inference_steps', panogen_steps), ('seed', _pan_seed)] if v is not None}
     if wfm_overrides or pan_overrides:
         patch = {}
         if wfm_overrides: patch['worldfm'] = wfm_overrides
