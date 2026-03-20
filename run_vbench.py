@@ -371,6 +371,15 @@ def vbench_batch(
                         vw.write(bgr)
                     vw.release()
 
+                    _cap = cv2.VideoCapture(out_mp4)
+                    _saved_w = int(_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    _saved_h = int(_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    _cap.release()
+                    assert (_saved_w, _saved_h) == (out_w, out_h), (
+                        f'Resolution mismatch in {out_mp4}: '
+                        f'expected {out_w}x{out_h}, got {_saved_w}x{_saved_h}'
+                    )
+
                     dur  = round(time.time() - t0, 2)
                     vram = round(torch.cuda.max_memory_allocated() / 1024**3, 2) if torch.cuda.is_available() else ''
                     try:
