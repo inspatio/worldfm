@@ -338,7 +338,8 @@ def step4_init(*, cfg=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     device_str = f"cuda:{torch.cuda.current_device()}" if device.type == "cuda" else "cpu"
 
-    model_p = Path(model_path).resolve()
+    model_p = Path(model_path) if Path(model_path).is_absolute() else (WORLDFM_ROOT / model_path).resolve()
+    model_p = model_p.resolve()
     vae_p = Path(vae_path)
     if not vae_p.is_absolute():
         vae_p = (WORLDFM_ROOT / vae_p).resolve()

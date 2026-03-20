@@ -136,6 +136,9 @@ def vbench_batch(
     seed_start=0,
     default_prompt='',
 ):
+    if frame_width and frame_height and frame_width >= frame_height:
+        sys.exit(f'[vbench] ERROR: output resolution {frame_width}x{frame_height} is not portrait (width must be < height)')
+
     info_json  = os.path.abspath(vbench_info_json or _DEFAULT_INFO_JSON)
     crop_base  = os.path.abspath(crop_dir or _DEFAULT_CROP_DIR)
     image_dir  = os.path.join(crop_base, resolution)
@@ -182,6 +185,7 @@ def vbench_batch(
 
     # ── load external repos + WorldFM model once ──────────────────────────────
     _vbench_yaml = str(_WORLDFM_ROOT / 'vbench.yaml')
+    print(f'[vbench] config: {_vbench_yaml}')
     cfg = _p.OmegaConf.load(_vbench_yaml)
     import random
     _pan_seed = panogen_seed if panogen_seed is not None else random.randint(0, 2**31 - 1)
@@ -240,6 +244,7 @@ def vbench_batch(
             # Load VBench prompt image as the appearance reference (cond2) for WorldFM
             _bgr = cv2.imread(image_path)
             prompt_img_rgb = cv2.cvtColor(_bgr, cv2.COLOR_BGR2RGB)
+            print(f'[vbench] image prompt: {image_path}  ({_bgr.shape[1]}x{_bgr.shape[0]})')
 
             out_mp4s = [os.path.join(out_dir, f'{stem}_s{sd}.mp4') for sd in seeds]
             if all(os.path.exists(p) for p in out_mp4s):
@@ -336,7 +341,7 @@ def vbench_batch(
                         except Exception as _fe:
                             raise RuntimeError(f'seed {sd} frame {fi+1}/{_total_frames}: render failed') from _fe
                         try:
-                            frame = _p.step4_infer_one(svc, render_u8, prompt_img_rgb, wcfg=wcfg, seed=sd * 1000 + fi)
+                            frame = _p.step4_infer_one(svc, render_u8, cond_nearest, wcfg=wcfg, seed=sd * 1000 + fi)
                         except Exception as _fe:
                             raise RuntimeError(f'seed {sd} frame {fi+1}/{_total_frames}: WorldFM inference failed') from _fe
                         frames.append(frame)
