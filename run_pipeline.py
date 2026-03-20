@@ -353,7 +353,7 @@ def step4_init(*, cfg=None):
             version=str(wcfg.version),
             disable_cross_attn=True,
             step=(step if step in (1, 2) else 2),
-            mid_t=int(wcfg.mid_t), cfg_scale=0.0,
+            mid_t=int(getattr(wcfg, "mid_t", 200)), cfg_scale=0.0,
             device=device_str,
             weight_dtype=torch.float16 if device.type == "cuda" else torch.float32,
         )

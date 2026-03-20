@@ -1,4 +1,6 @@
-# WorldFM VBench evaluation config
+# WorldFM Pipeline Default Configuration
+# Override via CLI args: python run_pipeline.py --meta ... --worldfm.model_path ...
+# Or load a custom config: python run_pipeline.py --config my_config.yaml --meta ...
 
 # ─── Pipeline ─────────────────────────────────────────────────────────────────
 pipeline:
@@ -13,7 +15,6 @@ submodules:
 # ─── Step 1: Panorama generation (HunyuanWorld) ─────────────────────────────
 panogen:
   seed: 42
-  num_inference_steps: 50
   fp8_attention: false
   fp8_gemm: false
   cache: false
@@ -30,7 +31,7 @@ moge:
 
 # ─── Step 3: Condition rendering & view selection ────────────────────────────
 render:
-  render_size: 960
+  render_size: 512
   sample_grid: 10
   center_grid: 15
   center_frac: 0.5
@@ -50,8 +51,5 @@ worldfm:
   model_path: weights/worldfm_${worldfm.step}-step.pth
   vae_path: weights/vae
   image_size: 512
-  image_height: 960
-  image_width: 720
   version: sigma
   cfg_scale: 4.5
-  mid_t: 200
