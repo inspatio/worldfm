@@ -179,7 +179,7 @@ def vbench_batch(
 
     # ── load external repos + WorldFM model once ──────────────────────────────
     _vbench_yaml = str(_WORLDFM_ROOT / 'vbench.yaml')
-    cfg = _p.OmegaConf.merge(_p.DEFAULT_CFG, _p.OmegaConf.load(_vbench_yaml))
+    cfg = _p.OmegaConf.load(_vbench_yaml)
     wfm_overrides = {k: v for k, v in [('step', step), ('cfg_scale', cfg_scale), ('mid_t', mid_t)] if v is not None}
     pan_overrides  = {k: v for k, v in [('num_inference_steps', panogen_steps)] if v is not None}
     if wfm_overrides or pan_overrides:
