@@ -48,8 +48,8 @@ render:
 # ─── Step 4: WorldFM inference ───────────────────────────────────────────────
 worldfm:
   step: 8
-  model_path: C:/workspace/world/worldfm/weights/worldfm_${worldfm.step}-step.pth
-  vae_path: C:/workspace/world/worldfm/weights/vae
+  model_path: C:/Users/horde/code/worldfm/weights/worldfm_2-step.pth
+  vae_path: C:/Users/horde/code/worldfm/weights/vae
   image_size: 512
   image_width: 960
   image_height: 720
