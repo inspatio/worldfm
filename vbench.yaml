@@ -14,7 +14,8 @@ submodules:
 
 # ─── Step 1: Panorama generation (HunyuanWorld) ─────────────────────────────
 panogen:
-  seed: 42
+  seed: -1
+  num_inference_steps: 20
   fp8_attention: false
   fp8_gemm: false
   cache: false
@@ -48,8 +49,8 @@ render:
 # ─── Step 4: WorldFM inference ───────────────────────────────────────────────
 worldfm:
   step: 8
-  model_path: C:/Users/horde/code/worldfm/weights/worldfm_2-step.pth
-  vae_path: C:/Users/horde/code/worldfm/weights/vae
+  model_path: weights/worldfm_2-step.pth
+  vae_path: weights/vae
   image_size: 512
   image_width: 720
   image_height: 960

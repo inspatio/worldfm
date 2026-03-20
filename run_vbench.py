@@ -134,6 +134,7 @@ def vbench_batch(
     frame_height=960,
     num_seeds=5,
     seed_start=0,
+    default_prompt='',
 ):
     info_json  = os.path.abspath(vbench_info_json or _DEFAULT_INFO_JSON)
     crop_base  = os.path.abspath(crop_dir or _DEFAULT_CROP_DIR)
@@ -169,7 +170,8 @@ def vbench_batch(
         if allowed and e.get('type') not in allowed:
             continue
         seen.add(fn)
-        images.append({'file': fn, 'type': e.get('type', ''), 'caption': e.get('caption', Path(fn).stem)})
+        caption = e.get('caption', '') or default_prompt or Path(fn).stem
+        images.append({'file': fn, 'type': e.get('type', ''), 'caption': caption})
 
     total = len(images)
     print(f'\n[vbench] {total} images  (types: {image_types}  resolution: {resolution})')
