@@ -73,8 +73,8 @@ rem ── 10. Run vbench ──────────────────
 python run_vbench.py vbench ^
     --output_dir results_vbench/videos ^
     --image_types "indoor,scenery" ^
-    --num_frames 161 ^
+    --num_samples 5 ^
+    --frames 161 ^
     --fps 24 ^
-    --frame_width 720 ^
-    --frame_height 960 ^
-    --default_prompt "a high quality photo of an indoor scene"
+    --height 960 ^
+    --width 720

@@ -121,7 +121,7 @@ class WorldFMTriConditionInprocess:
 
         max_sequence_length = {"alpha": 120, "sigma": 300}[cfg.version]
         latent_size = int(cfg.image_size // 8)
-        pe_interpolation = cfg.image_size / 512
+        pe_interpolation = max(_h, _w) / 512
         micro_condition = cfg.version == "alpha" and cfg.image_size == 1024
 
         if cfg.image_size in (512, 1024, 2048) or cfg.version == "sigma":

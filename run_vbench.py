@@ -135,7 +135,20 @@ def vbench_batch(
     num_seeds=5,
     seed_start=0,
     default_prompt='',
+    # DeepVerse-compatible aliases
+    width=None,
+    height=None,
+    frames=None,
+    num_samples=None,
 ):
+    if width is not None:
+        frame_width = int(width)
+    if height is not None:
+        frame_height = int(height)
+    if frames is not None:
+        num_frames = int(frames)
+    if num_samples is not None:
+        num_seeds = int(num_samples)
     if frame_width and frame_height and frame_width >= frame_height:
         sys.exit(f'[vbench] ERROR: output resolution {frame_width}x{frame_height} is not portrait (width must be < height)')
 
@@ -275,6 +288,7 @@ def vbench_batch(
                     panorama_img = _p.step1_panogen(image_path, tmp_out, cfg=cfg, prompt=img['caption'], demo=panogen_demo)
                 except Exception as _e:
                     raise RuntimeError(f'panogen failed: {_e}') from _e
+                print(f'[vbench] panorama: {tmp_out / "panorama.png"}')
                 _finish_step(ts)
 
                 _step('moge')
@@ -341,7 +355,8 @@ def vbench_batch(
                         except Exception as _fe:
                             raise RuntimeError(f'seed {sd} frame {fi+1}/{_total_frames}: render failed') from _fe
                         try:
-                            frame = _p.step4_infer_one(svc, render_u8, cond_nearest, wcfg=wcfg, seed=sd * 1000 + fi)
+                            frame = _p.step4_infer_one(svc, render_u8, cond_nearest, wcfg=wcfg, seed=sd * 1000 + fi,
+                                                       cond2_rgb=prompt_img_rgb)
                         except Exception as _fe:
                             raise RuntimeError(f'seed {sd} frame {fi+1}/{_total_frames}: WorldFM inference failed') from _fe
                         frames.append(frame)
@@ -374,10 +389,27 @@ def vbench_batch(
                     _cap = cv2.VideoCapture(out_mp4)
                     _saved_w = int(_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                     _saved_h = int(_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    _n_saved = int(_cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                    # check portrait and not all-black: sample up to 5 evenly-spaced frames
+                    _sample_means = []
+                    if _n_saved > 0:
+                        _indices = [int(_n_saved * k / 5) for k in range(5)]
+                        for _fi in _indices:
+                            _cap.set(cv2.CAP_PROP_POS_FRAMES, _fi)
+                            _ok, _fr = _cap.read()
+                            if _ok:
+                                _sample_means.append(float(_fr.mean()))
                     _cap.release()
                     assert (_saved_w, _saved_h) == (out_w, out_h), (
                         f'Resolution mismatch in {out_mp4}: '
                         f'expected {out_w}x{out_h}, got {_saved_w}x{_saved_h}'
+                    )
+                    assert _saved_w < _saved_h, (
+                        f'Video is not portrait in {out_mp4}: {_saved_w}x{_saved_h}'
+                    )
+                    _mean_brightness = sum(_sample_means) / len(_sample_means) if _sample_means else 0.0
+                    assert _mean_brightness > 5.0, (
+                        f'Video appears all-black in {out_mp4}: mean brightness={_mean_brightness:.2f} across {len(_sample_means)} sampled frames'
                     )
 
                     dur  = round(time.time() - t0, 2)
@@ -419,7 +451,7 @@ def vbench_batch(
                     errors += 1
 
             finally:
-                shutil.rmtree(tmp_out, ignore_errors=True)
+                pass  # keep tmp_out for inspection
 
             stats_f.flush()
 

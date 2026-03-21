@@ -370,8 +370,11 @@ def step4_infer_one(
     *,
     wcfg=None,
     seed: int = None,
+    cond2_rgb: np.ndarray = None,
 ) -> np.ndarray:
     """Run WorldFM inference for a single frame.
+
+    cond2_rgb: optional appearance-reference image (H,W,3) uint8; if None, cond_nearest_rgb is used.
 
     Returns (H, W, 3) uint8 numpy array (RGB).
     """
@@ -380,7 +383,16 @@ def step4_infer_one(
     cfg_scale = float(wcfg.cfg_scale)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    svc.set_cond2_from_array(cond_nearest_rgb)
+    _cond2 = cond2_rgb if cond2_rgb is not None else cond_nearest_rgb
+
+    # assert inputs are not degenerate
+    _render_arr = render_rgb_u8.cpu().numpy() if isinstance(render_rgb_u8, torch.Tensor) else np.asarray(render_rgb_u8)
+    assert _render_arr.shape[-1] == 3, f"render must be (H,W,3), got {_render_arr.shape}"
+    assert _render_arr.mean() > 1.0, f"render is nearly all-black (mean={_render_arr.mean():.2f}); point cloud may have no coverage"
+    assert _cond2.shape[-1] == 3, f"cond2 must be (H,W,3), got {_cond2.shape}"
+    assert _cond2.mean() > 1.0, f"cond2 is nearly all-black (mean={_cond2.mean():.2f})"
+
+    svc.set_cond2_from_array(_cond2)
 
     if isinstance(render_rgb_u8, torch.Tensor):
         render_u8 = render_rgb_u8
@@ -439,7 +451,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="WorldFM output width in pixels (overrides --image_size)")
     p.add_argument("--step", type=int, default=d.worldfm.step,
                    help="WorldFM inference steps (1 or 2)", choices=[1, 2])
-    p.add_argument("--mid_t", type=int, default=d.worldfm.mid_t,
+    p.add_argument("--mid_t", type=int, default=getattr(d.worldfm, 'mid_t', 200),
                        help="Intermediate noise timestep for DMD 2-step sampling (default: %(default)s)")
     p.add_argument("--cfg_scale", type=float, default=d.worldfm.cfg_scale,
                    help="CFG scale for multi-step sampling")
