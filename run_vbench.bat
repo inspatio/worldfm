@@ -15,7 +15,7 @@ python run_vbench.py ^
     --vbench-json "%VBENCH_JSON%" ^
     --vbench-crop "%VBENCH_CROP%" ^
     --config vbench.yaml ^
-    --num-samples 20 ^
+    --num-samples 12 ^
     --skip-existing
 
 exit /b %ERRORLEVEL%

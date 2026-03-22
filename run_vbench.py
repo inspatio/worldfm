@@ -9,10 +9,12 @@ matching the DeepVerse naming convention.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 WORLDFM_ROOT = Path(__file__).resolve().parent
@@ -60,6 +62,35 @@ def _check_brightness(path: Path, label: str, is_video: bool) -> None:
     print(f"    {label}: brightness={brightness:.1f}", flush=True)
 
 
+def _sys_stats() -> tuple[float, float, float, float]:
+    """Returns (ram_used_gb, ram_total_gb, vram_used_gb, vram_total_gb)."""
+    try:
+        import psutil
+        vm = psutil.virtual_memory()
+        ram_used, ram_total = vm.used / 1024**3, vm.total / 1024**3
+    except Exception:
+        ram_used, ram_total = 0.0, 0.0
+    try:
+        import torch
+        if torch.cuda.is_available():
+            vram_used  = torch.cuda.memory_allocated() / 1024**3
+            vram_total = torch.cuda.get_device_properties(0).total_memory / 1024**3
+        else:
+            vram_used = vram_total = 0.0
+    except Exception:
+        vram_used = vram_total = 0.0
+    return ram_used, ram_total, vram_used, vram_total
+
+
+def _video_fps_frames(path: Path) -> tuple[float, int]:
+    import cv2 as _cv2
+    cap = _cv2.VideoCapture(str(path))
+    fps    = cap.get(_cv2.CAP_PROP_FPS)
+    frames = int(cap.get(_cv2.CAP_PROP_FRAME_COUNT))
+    cap.release()
+    return fps, frames
+
+
 def run_vbench(
     vbench_json: Path,
     vbench_crop: Path,
@@ -91,6 +122,22 @@ def run_vbench(
     output_dir.mkdir(parents=True, exist_ok=True)
     tmp_dir.mkdir(parents=True, exist_ok=True)
 
+    stats_path = output_dir.parent / "vbench_stats.csv"
+    stats_is_new = not stats_path.exists()
+    stats_f = open(stats_path, "a", newline="", encoding="utf-8")
+    stats_w = csv.writer(stats_f)
+    if stats_is_new:
+        stats_w.writerow([
+            "timestamp", "task_idx", "caption", "seed_idx",
+            "duration_s", "fps", "num_frames",
+            "ram_used_gb", "ram_total_gb", "vram_used_gb", "vram_total_gb",
+            "out_path", "status",
+        ])
+
+    t_start = time.perf_counter()
+    generated = skipped = errors = 0
+    ok_total_s = 0.0
+
     processed = 0
     for entry in entries:
         if num_samples > 0 and processed >= num_samples:
@@ -113,6 +160,11 @@ def run_vbench(
             out_video = output_dir / f"{caption}_s{seed_idx}.mp4"
             if skip_existing and out_video.exists():
                 print(f"    [skip] seed {seed_idx} already exists", flush=True)
+                skipped += 1
+                fps, nf = _video_fps_frames(out_video)
+                stats_w.writerow([time.strftime("%Y-%m-%dT%H:%M:%S"), processed, caption, seed_idx,
+                                   "", f"{fps:.2f}", nf, "", "", "", "", str(out_video), "skipped"])
+                stats_f.flush()
                 continue
 
             # Per-seed output dir keeps all intermediates (panorama, depth, etc.)
@@ -144,10 +196,20 @@ def run_vbench(
                 "--config", str(seed_cfg_path),
             ] + extra_args
 
+            t0 = time.perf_counter()
             print(f"    seed {seed_idx} ...", flush=True)
             ret = subprocess.call(cmd)
+            duration = time.perf_counter() - t0
+
             if ret != 0:
+                ram_used, ram_total, vram_used, vram_total = _sys_stats()
                 print(f"[error] pipeline returned {ret} (seed={seed_idx})", flush=True)
+                stats_w.writerow([time.strftime("%Y-%m-%dT%H:%M:%S"), processed, caption, seed_idx,
+                                   f"{duration:.1f}", "", "",
+                                   f"{ram_used:.2f}", f"{ram_total:.2f}", f"{vram_used:.2f}", f"{vram_total:.2f}",
+                                   str(out_video), "error"])
+                stats_f.flush()
+                errors += 1
                 sys.exit(1)
 
             seed_name = f"{safe_name}_s{seed_idx}"
@@ -156,6 +218,8 @@ def run_vbench(
 
             src = pipeline_out / seed_name / "output.mp4"
             _check_brightness(src, "video", is_video=True)
+
+            fps, num_frames = _video_fps_frames(src)
 
             if exp_w and exp_h:
                 cap = _cv2.VideoCapture(str(src))
@@ -168,14 +232,31 @@ def run_vbench(
                 print(f"    resolution: {got_w}x{got_h} OK", flush=True)
 
             shutil.move(str(src), str(out_video))
-            # Keep all other intermediates (panorama.png, depth, etc.) in seed_out
             for f in (pipeline_out / seed_name).iterdir():
                 shutil.move(str(f), str(seed_out / f.name))
-            print(f"    saved  : {out_video.name}  (intermediates: {seed_out.name})", flush=True)
+
+            ram_used, ram_total, vram_used, vram_total = _sys_stats()
+            ok_total_s += duration
+            generated += 1
+            avg_s = ok_total_s / generated
+            print(f"    saved  : {out_video.name}  {duration:.0f}s  fps={fps:.2f}  frames={num_frames}"
+                  f"  RAM {ram_used:.1f}/{ram_total:.0f}GB  VRAM {vram_used:.1f}/{vram_total:.0f}GB"
+                  f"  avg {avg_s/60:.1f} min/video", flush=True)
+            stats_w.writerow([time.strftime("%Y-%m-%dT%H:%M:%S"), processed, caption, seed_idx,
+                               f"{duration:.1f}", f"{fps:.2f}", num_frames,
+                               f"{ram_used:.2f}", f"{ram_total:.2f}", f"{vram_used:.2f}", f"{vram_total:.2f}",
+                               str(out_video), "ok"])
+            stats_f.flush()
 
         processed += 1
 
-    print(f"\nDone. {processed} images processed -> {output_dir}", flush=True)
+    stats_f.close()
+    elapsed = time.perf_counter() - t_start
+    print(f"\nDone. generated={generated}  skipped={skipped}  errors={errors}  "
+          f"elapsed={elapsed/60:.1f} min", flush=True)
+    if generated:
+        print(f"avg per video: {ok_total_s/generated/60:.1f} min", flush=True)
+    print(f"stats -> {stats_path}", flush=True)
 
 
 def main() -> int:

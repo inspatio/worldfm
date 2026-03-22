@@ -525,6 +525,9 @@ def main() -> int:
     _log("Main", f"output_dir={output_dir}")
     _log("Main", f"poses={len(c2w_list)}")
 
+    import time as _time
+    _t_total = _time.perf_counter()
+
     # ---- Setup external repos (MoGe first, then HunyuanWorld) ----
     setup_external_repos(
         hw_path=str(cfg.submodules.hw_path),
@@ -532,40 +535,53 @@ def main() -> int:
     )
 
     # ---- Step 1: Perspective -> Panorama (PIL Image) ----
+    _t1 = _time.perf_counter()
     panorama_img = step1_panogen(
         image_path=str(image_path),
         output_dir=output_dir,
         cfg=cfg,
         prompt=prompt,
     )
+    _log("Timing", f"step1_panogen: {_time.perf_counter()-_t1:.1f}s")
 
     # ---- Step 2: Panorama -> depth/PLY/conditions (in memory) ----
+    _t2 = _time.perf_counter()
     pp_result = step2_moge_pipeline(
         panorama_img=panorama_img,
         output_dir=output_dir,
         cfg=cfg,
     )
+    _log("Timing", f"step2_moge: {_time.perf_counter()-_t2:.1f}s")
 
     # ---- Step 3 init: renderer + condition DB (once) ----
     _log("Step3", "Initializing renderer and condition DB")
+    _t3i = _time.perf_counter()
     renderer, cond_db, rcfg, S = step3_init(pp_result, cfg=cfg)
+    _log("Timing", f"step3_init: {_time.perf_counter()-_t3i:.1f}s")
 
     # ---- Step 4 init: WorldFM service (once) ----
     _log("Step4", "Loading WorldFM inference service")
+    _t4i = _time.perf_counter()
     svc, wcfg = step4_init(cfg=cfg)
+    _log("Timing", f"step4_init: {_time.perf_counter()-_t4i:.1f}s")
 
     # ---- Generate for each target pose ----
     save_mode = args.save_mode
     frames: list[np.ndarray] = []
+    _t_frame_total = 0.0
     for i, c2w in enumerate(c2w_list):
         _log("Main", f"Generating frame {i + 1}/{len(c2w_list)}")
 
+        _tf = _time.perf_counter()
         render_u8, cond_nearest_rgb = step3_render_one(
             renderer, cond_db, pp_result, K, c2w,
             rcfg=rcfg, render_size=S,
         )
 
         frame = step4_infer_one(svc, render_u8, cond_nearest_rgb, wcfg=wcfg)
+        _dt = _time.perf_counter() - _tf
+        _t_frame_total += _dt
+        _log("Timing", f"  frame {i+1}/{len(c2w_list)}: {_dt:.2f}s")
 
         if save_mode == "image":
             out_name = "output.png" if len(c2w_list) == 1 else f"output_{i:04d}.png"
@@ -592,6 +608,9 @@ def main() -> int:
         torch.cuda.empty_cache()
 
     n = len(c2w_list)
+    _t_total_s = _time.perf_counter() - _t_total
+    _log("Timing", f"frames total: {_t_frame_total:.1f}s  avg/frame: {_t_frame_total/max(n,1):.2f}s")
+    _log("Timing", f"pipeline total: {_t_total_s:.1f}s  ({_t_total_s/60:.1f} min)")
     _log("Main", f"Pipeline complete: {n} frames ({'video' if save_mode == 'video' else 'images'}) in {output_dir}")
     return 0
 
