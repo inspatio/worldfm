@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import shutil
 import subprocess
 import sys
@@ -28,18 +27,12 @@ VBENCH_DEFAULT_CROP = (
 )
 
 
-def _make_k(width: int, height: int, fov_deg: float = 90.0) -> list:
-    """Pinhole K for a square/portrait/landscape image at the given FOV."""
-    # Use the smaller dimension for FOV so the full image fits in view
-    focal_px = (min(width, height) / 2) / math.tan(math.radians(fov_deg / 2))
-    cx, cy = width / 2.0, height / 2.0
-    return [[focal_px, 0.0, cx], [0.0, focal_px, cy], [0.0, 0.0, 1.0]]
 
-
-def _load_demo_c2w() -> list:
-    """Return the canonical walk-through trajectory from demo/meta.json."""
+def _load_demo_meta() -> tuple[list, list]:
+    """Return (K, c2w) from demo/meta_vbench.json — identical to the demo run."""
     with open(DEMO_META) as f:
-        return json.load(f)["c2w"]
+        m = json.load(f)
+    return m["K"], m["c2w"]
 
 
 def run_vbench(
@@ -55,7 +48,7 @@ def run_vbench(
     with open(vbench_json) as f:
         entries = json.load(f)
 
-    c2w = _load_demo_c2w()
+    K, c2w = _load_demo_meta()
     output_dir.mkdir(parents=True, exist_ok=True)
     tmp_dir.mkdir(parents=True, exist_ok=True)
 
@@ -77,15 +70,6 @@ def run_vbench(
             print(f"[skip] already exists: {out_video.name}", flush=True)
             processed += 1
             continue
-
-        # --- Derive K from image size ---
-        try:
-            from PIL import Image as PILImage
-            img = PILImage.open(img_path)
-            w, h = img.size
-        except Exception:
-            w, h = 512, 512
-        K = _make_k(w, h)
 
         # --- Write temp meta.json ---
         safe_name = caption[:80].replace("/", "_").replace("\\", "_")
@@ -119,15 +103,44 @@ def run_vbench(
         ret = subprocess.call(cmd)
 
         if ret != 0:
-            print(f"[warn] pipeline returned {ret} for: {caption}", flush=True)
-        else:
-            # Pipeline saves to pipeline_out/{safe_name}/output.mp4
-            src = pipeline_out / safe_name / "output.mp4"
-            if src.exists():
-                shutil.move(str(src), str(out_video))
-                print(f"    saved  : {out_video.name}", flush=True)
+            print(f"[error] pipeline returned {ret} for: {caption}", flush=True)
+            sys.exit(1)
+
+        import cv2 as _cv2
+        import numpy as _np
+
+        def _check_brightness(path: Path, label: str, is_video: bool) -> None:
+            if not path.exists():
+                print(f"[error] {label} not found: {path}", flush=True)
+                sys.exit(1)
+            if is_video:
+                cap = _cv2.VideoCapture(str(path))
+                n = int(cap.get(_cv2.CAP_PROP_FRAME_COUNT))
+                means = []
+                for fi in [int(n * k / 5) for k in range(5)]:
+                    cap.set(_cv2.CAP_PROP_POS_FRAMES, fi)
+                    ok, frame = cap.read()
+                    if ok:
+                        means.append(float(frame.mean()))
+                cap.release()
+                brightness = sum(means) / len(means) if means else 0.0
             else:
-                print(f"[warn] output not found: {src}", flush=True)
+                img = _cv2.imread(str(path))
+                brightness = float(img.mean()) if img is not None else 0.0
+            if brightness < 5.0:
+                print(f"[error] all-black {label}: {path.name} brightness={brightness:.2f}", flush=True)
+                sys.exit(1)
+            print(f"    {label}: brightness={brightness:.1f}", flush=True)
+
+        # Check panorama
+        pano_path = pipeline_out / safe_name / "panorama.png"
+        _check_brightness(pano_path, "panorama", is_video=False)
+
+        # Check output video
+        src = pipeline_out / safe_name / "output.mp4"
+        _check_brightness(src, "video", is_video=True)
+        shutil.move(str(src), str(out_video))
+        print(f"    saved  : {out_video.name}", flush=True)
 
         processed += 1
 

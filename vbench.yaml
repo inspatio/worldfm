@@ -48,7 +48,7 @@ render:
 
 # ─── Step 4: WorldFM inference ───────────────────────────────────────────────
 worldfm:
-  step: 8
+  step: 2
   model_path: weights/worldfm_2-step.pth
   vae_path: weights/vae
   image_size: 512
