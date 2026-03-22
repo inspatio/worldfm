@@ -155,6 +155,7 @@ def step1_panogen(image_path: str, output_dir: Path, *, cfg=None, prompt: str = 
         output_path=None,
     )
 
+    Image.fromarray(np.array(pano_img)).save(str(pano_disk))
     _log("Step1", f"Panorama generated: {np.array(pano_img).shape}")
     return pano_img
 
@@ -460,7 +461,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--save_mode", type=str, default="video",
                    choices=["image", "video"],
                    help="Output format: 'image' saves per-frame PNGs, 'video' saves MP4 (default: video)")
-    p.add_argument("--fps", type=int, default=30,
+    p.add_argument("--fps", type=int, default=24,
                    help="Video frame rate when --save_mode=video (default: 30)")
     return p
 
@@ -477,13 +478,16 @@ def _load_config(args) -> OmegaConf:
         "submodules": {"hw_path": args.hw_path, "moge_path": args.moge_path},
         "moge": {"pretrained": "Ruicheng/moge-2-vitl-normal" if args.moge_pretrained is None else args.moge_pretrained},
         "render": {"render_size": args.render_size},
-        "worldfm": {"model_path": args.model_path,
+        "worldfm": {k: v for k, v in {
+                     "model_path": args.model_path,
                      "vae_path": args.vae_path,
                      "image_size": args.image_size,
-                     "image_height": args.image_height if args.image_height is not None else args.image_size,
-                     "image_width": args.image_width if args.image_width is not None else args.image_size,
+                     "image_height": args.image_height,
+                     "image_width": args.image_width,
                      "step": args.step,
-                     "mid_t": args.mid_t, "cfg_scale": args.cfg_scale},
+                     "mid_t": args.mid_t,
+                     "cfg_scale": args.cfg_scale,
+                     }.items() if v is not None},
     })
     cfg = OmegaConf.merge(cfg, cli_overrides)
     return cfg
@@ -492,6 +496,7 @@ def _load_config(args) -> OmegaConf:
 def main() -> int:
     args = build_parser().parse_args()
     cfg = _load_config(args)
+    args.fps = int(getattr(cfg.worldfm, "fps", args.fps))
 
     if cfg.pipeline.gpu_index >= 0 and torch.cuda.is_available():
         torch.cuda.set_device(int(cfg.pipeline.gpu_index))
@@ -501,6 +506,7 @@ def main() -> int:
     meta_dir = meta_path.parent
 
     name = meta["name"]
+    prompt = meta.get("prompt", "")
     image_path = (meta_dir / meta["image"]).resolve()
     K = np.asarray(meta["K"], dtype=np.float64)
     c2w_list = [np.asarray(c, dtype=np.float64) for c in meta["c2w"]]
@@ -530,6 +536,7 @@ def main() -> int:
         image_path=str(image_path),
         output_dir=output_dir,
         cfg=cfg,
+        prompt=prompt,
     )
 
     # ---- Step 2: Panorama -> depth/PLY/conditions (in memory) ----
