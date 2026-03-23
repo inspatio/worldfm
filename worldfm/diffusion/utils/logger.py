@@ -3,7 +3,7 @@ import os
 import torch.distributed as dist
 from datetime import datetime
 from .dist_utils import is_local_master
-from mmcv.utils.logging import logger_initialized
+logger_initialized = {}
 
 
 def get_root_logger(log_file=None, log_level=logging.INFO, name='WorldFM'):

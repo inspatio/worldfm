@@ -22,6 +22,11 @@ import os
 import sys
 from pathlib import Path
 
+# Disable xformers on GPUs whose compute capability exceeds what the installed
+# xformers kernels support (fa3/cutlass require <= sm_90; Blackwell is sm_120).
+# DINOv2 checks XFORMERS_DISABLED at import time and falls back to standard attn.
+os.environ.setdefault("XFORMERS_DISABLED", "1")
+
 import cv2
 import numpy as np
 import torch
@@ -104,11 +109,30 @@ def setup_external_repos(*, hw_path: str = "", moge_path: str = "") -> None:
 
 # ============================== Step 1 =======================================
 
-def step1_panogen(image_path: str, output_dir: Path, *, cfg=None):
+def step1_init(*, cfg=None):
+    """Load the panorama generation model once (heavy, reusable across images).
+
+    Returns Image2PanoramaDemo instance.
+    Requires setup_external_repos() to have been called first.
+    """
+    pcfg = (cfg or DEFAULT_CFG).panogen
+
+    class _Args:
+        fp8_attention = bool(pcfg.fp8_attention)
+        fp8_gemm = bool(pcfg.fp8_gemm)
+        cache = bool(pcfg.cache)
+
+    demo = Image2PanoramaDemo(_Args())
+    demo.num_inference_steps = int(pcfg.num_inference_steps)
+    return demo
+
+
+def step1_panogen(image_path: str, output_dir: Path, *, cfg=None, prompt: str = "", demo=None):
     """Perspective image -> panorama (PIL Image).
 
     Returns PIL.Image.Image (panorama).
     Requires setup_external_repos() to have been called first.
+    Pass a pre-loaded demo from step1_init() to avoid reloading the model.
     """
     pcfg = (cfg or DEFAULT_CFG).panogen
     _log("Step1", f"Generating panorama from {image_path}")
@@ -118,16 +142,12 @@ def step1_panogen(image_path: str, output_dir: Path, *, cfg=None):
         _log("Step1", f"Panorama already exists, loading: {pano_disk}")
         return Image.open(pano_disk).convert("RGB")
 
-    class _Args:
-        fp8_attention = bool(pcfg.fp8_attention)
-        fp8_gemm = bool(pcfg.fp8_gemm)
-        cache = bool(pcfg.cache)
-
-    demo = Image2PanoramaDemo(_Args())
+    if demo is None:
+        demo = step1_init(cfg=cfg)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     pano_img = demo.run(
-        prompt="",
+        prompt=prompt,
         negative_prompt="",
         image_path=str(image_path),
         seed=int(pcfg.seed),
@@ -135,6 +155,7 @@ def step1_panogen(image_path: str, output_dir: Path, *, cfg=None):
         output_path=None,
     )
 
+    Image.fromarray(np.array(pano_img)).save(str(pano_disk))
     _log("Step1", f"Panorama generated: {np.array(pano_img).shape}")
     return pano_img
 
@@ -173,6 +194,11 @@ def step2_moge_pipeline(panorama_img, output_dir: Path, *, cfg=None, pretrained:
         interp = cv2.INTER_AREA if tgt_w < orig_w else cv2.INTER_LINEAR
         image_rgb = cv2.resize(image_rgb, (tgt_w, tgt_h), interpolation=interp)
     height, width = image_rgb.shape[:2]
+
+    import gc
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = moge_pano.MoGeModel.from_pretrained(pretrained).to(device).eval()
@@ -306,12 +332,15 @@ def step4_init(*, cfg=None):
     model_path = str(wcfg.model_path)
     vae_path = str(wcfg.vae_path)
     image_size = int(wcfg.image_size)
+    image_height = int(getattr(wcfg, "image_height", image_size))
+    image_width = int(getattr(wcfg, "image_width", image_size))
     step = int(wcfg.step)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     device_str = f"cuda:{torch.cuda.current_device()}" if device.type == "cuda" else "cpu"
 
-    model_p = Path(model_path).resolve()
+    model_p = Path(model_path) if Path(model_path).is_absolute() else (WORLDFM_ROOT / model_path).resolve()
+    model_p = model_p.resolve()
     vae_p = Path(vae_path)
     if not vae_p.is_absolute():
         vae_p = (WORLDFM_ROOT / vae_p).resolve()
@@ -321,10 +350,12 @@ def step4_init(*, cfg=None):
             model_path=str(model_p),
             vae_path=str(vae_p),
             image_size=image_size,
+            image_height=image_height,
+            image_width=image_width,
             version=str(wcfg.version),
             disable_cross_attn=True,
             step=(step if step in (1, 2) else 2),
-            mid_t=200, cfg_scale=0.0,
+            mid_t=int(getattr(wcfg, "mid_t", 200)), cfg_scale=0.0,
             device=device_str,
             weight_dtype=torch.float16 if device.type == "cuda" else torch.float32,
         )
@@ -339,8 +370,12 @@ def step4_infer_one(
     cond_nearest_rgb: np.ndarray,
     *,
     wcfg=None,
+    seed: int = None,
+    cond2_rgb: np.ndarray = None,
 ) -> np.ndarray:
     """Run WorldFM inference for a single frame.
+
+    cond2_rgb: optional appearance-reference image (H,W,3) uint8; if None, cond_nearest_rgb is used.
 
     Returns (H, W, 3) uint8 numpy array (RGB).
     """
@@ -349,7 +384,16 @@ def step4_infer_one(
     cfg_scale = float(wcfg.cfg_scale)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    svc.set_cond2_from_array(cond_nearest_rgb)
+    _cond2 = cond2_rgb if cond2_rgb is not None else cond_nearest_rgb
+
+    # assert inputs are not degenerate
+    _render_arr = render_rgb_u8.cpu().numpy() if isinstance(render_rgb_u8, torch.Tensor) else np.asarray(render_rgb_u8)
+    assert _render_arr.shape[-1] == 3, f"render must be (H,W,3), got {_render_arr.shape}"
+    assert _render_arr.mean() > 1.0, f"render is nearly all-black (mean={_render_arr.mean():.2f}); point cloud may have no coverage"
+    assert _cond2.shape[-1] == 3, f"cond2 must be (H,W,3), got {_cond2.shape}"
+    assert _cond2.mean() > 1.0, f"cond2 is nearly all-black (mean={_cond2.mean():.2f})"
+
+    svc.set_cond2_from_array(_cond2)
 
     if isinstance(render_rgb_u8, torch.Tensor):
         render_u8 = render_rgb_u8
@@ -359,10 +403,10 @@ def step4_infer_one(
         ).to(device=device, dtype=torch.uint8)
 
     if step in (1, 2):
-        decoded = svc.infer_from_render_u8(render_u8)
+        decoded = svc.infer_from_render_u8(render_u8, seed=seed)
     else:
         decoded = svc.infer_from_render_u8_multistep(
-            render_u8, sample_steps=step, cfg_scale=cfg_scale,
+            render_u8, sample_steps=step, cfg_scale=cfg_scale, seed=seed,
         )
 
     out_u8 = (
@@ -401,9 +445,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--vae_path", type=str, default=d.worldfm.vae_path,
                    help="Path to VAE directory (AutoencoderKL)")
     p.add_argument("--image_size", type=int, default=d.worldfm.image_size,
-                   help="WorldFM inference resolution")
+                   help="WorldFM inference resolution (square, overridden by --image_height/--image_width)")
+    p.add_argument("--image_height", type=int, default=None,
+                   help="WorldFM output height in pixels (overrides --image_size)")
+    p.add_argument("--image_width", type=int, default=None,
+                   help="WorldFM output width in pixels (overrides --image_size)")
     p.add_argument("--step", type=int, default=d.worldfm.step,
                    help="WorldFM inference steps (1 or 2)", choices=[1, 2])
+    p.add_argument("--mid_t", type=int, default=getattr(d.worldfm, 'mid_t', 200),
+                       help="Intermediate noise timestep for DMD 2-step sampling (default: %(default)s)")
     p.add_argument("--cfg_scale", type=float, default=d.worldfm.cfg_scale,
                    help="CFG scale for multi-step sampling")
     p.add_argument("--gpu_index", type=int, default=d.pipeline.gpu_index,
@@ -411,7 +461,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--save_mode", type=str, default="video",
                    choices=["image", "video"],
                    help="Output format: 'image' saves per-frame PNGs, 'video' saves MP4 (default: video)")
-    p.add_argument("--fps", type=int, default=30,
+    p.add_argument("--fps", type=int, default=24,
                    help="Video frame rate when --save_mode=video (default: 30)")
     return p
 
@@ -428,10 +478,16 @@ def _load_config(args) -> OmegaConf:
         "submodules": {"hw_path": args.hw_path, "moge_path": args.moge_path},
         "moge": {"pretrained": "Ruicheng/moge-2-vitl-normal" if args.moge_pretrained is None else args.moge_pretrained},
         "render": {"render_size": args.render_size},
-        "worldfm": {"model_path": args.model_path,
+        "worldfm": {k: v for k, v in {
+                     "model_path": args.model_path,
                      "vae_path": args.vae_path,
-                     "image_size": args.image_size, "step": args.step,
-                     "cfg_scale": args.cfg_scale},
+                     "image_size": args.image_size,
+                     "image_height": args.image_height,
+                     "image_width": args.image_width,
+                     "step": args.step,
+                     "mid_t": args.mid_t,
+                     "cfg_scale": args.cfg_scale,
+                     }.items() if v is not None},
     })
     cfg = OmegaConf.merge(cfg, cli_overrides)
     return cfg
@@ -440,6 +496,7 @@ def _load_config(args) -> OmegaConf:
 def main() -> int:
     args = build_parser().parse_args()
     cfg = _load_config(args)
+    args.fps = int(getattr(cfg.worldfm, "fps", args.fps))
 
     if cfg.pipeline.gpu_index >= 0 and torch.cuda.is_available():
         torch.cuda.set_device(int(cfg.pipeline.gpu_index))
@@ -449,6 +506,7 @@ def main() -> int:
     meta_dir = meta_path.parent
 
     name = meta["name"]
+    prompt = meta.get("prompt", "")
     image_path = (meta_dir / meta["image"]).resolve()
     K = np.asarray(meta["K"], dtype=np.float64)
     c2w_list = [np.asarray(c, dtype=np.float64) for c in meta["c2w"]]
@@ -467,6 +525,9 @@ def main() -> int:
     _log("Main", f"output_dir={output_dir}")
     _log("Main", f"poses={len(c2w_list)}")
 
+    import time as _time
+    _t_total = _time.perf_counter()
+
     # ---- Setup external repos (MoGe first, then HunyuanWorld) ----
     setup_external_repos(
         hw_path=str(cfg.submodules.hw_path),
@@ -474,39 +535,53 @@ def main() -> int:
     )
 
     # ---- Step 1: Perspective -> Panorama (PIL Image) ----
+    _t1 = _time.perf_counter()
     panorama_img = step1_panogen(
         image_path=str(image_path),
         output_dir=output_dir,
         cfg=cfg,
+        prompt=prompt,
     )
+    _log("Timing", f"step1_panogen: {_time.perf_counter()-_t1:.1f}s")
 
     # ---- Step 2: Panorama -> depth/PLY/conditions (in memory) ----
+    _t2 = _time.perf_counter()
     pp_result = step2_moge_pipeline(
         panorama_img=panorama_img,
         output_dir=output_dir,
         cfg=cfg,
     )
+    _log("Timing", f"step2_moge: {_time.perf_counter()-_t2:.1f}s")
 
     # ---- Step 3 init: renderer + condition DB (once) ----
     _log("Step3", "Initializing renderer and condition DB")
+    _t3i = _time.perf_counter()
     renderer, cond_db, rcfg, S = step3_init(pp_result, cfg=cfg)
+    _log("Timing", f"step3_init: {_time.perf_counter()-_t3i:.1f}s")
 
     # ---- Step 4 init: WorldFM service (once) ----
     _log("Step4", "Loading WorldFM inference service")
+    _t4i = _time.perf_counter()
     svc, wcfg = step4_init(cfg=cfg)
+    _log("Timing", f"step4_init: {_time.perf_counter()-_t4i:.1f}s")
 
     # ---- Generate for each target pose ----
     save_mode = args.save_mode
     frames: list[np.ndarray] = []
+    _t_frame_total = 0.0
     for i, c2w in enumerate(c2w_list):
         _log("Main", f"Generating frame {i + 1}/{len(c2w_list)}")
 
+        _tf = _time.perf_counter()
         render_u8, cond_nearest_rgb = step3_render_one(
             renderer, cond_db, pp_result, K, c2w,
             rcfg=rcfg, render_size=S,
         )
 
         frame = step4_infer_one(svc, render_u8, cond_nearest_rgb, wcfg=wcfg)
+        _dt = _time.perf_counter() - _tf
+        _t_frame_total += _dt
+        _log("Timing", f"  frame {i+1}/{len(c2w_list)}: {_dt:.2f}s")
 
         if save_mode == "image":
             out_name = "output.png" if len(c2w_list) == 1 else f"output_{i:04d}.png"
@@ -533,6 +608,9 @@ def main() -> int:
         torch.cuda.empty_cache()
 
     n = len(c2w_list)
+    _t_total_s = _time.perf_counter() - _t_total
+    _log("Timing", f"frames total: {_t_frame_total:.1f}s  avg/frame: {_t_frame_total/max(n,1):.2f}s")
+    _log("Timing", f"pipeline total: {_t_total_s:.1f}s  ({_t_total_s/60:.1f} min)")
     _log("Main", f"Pipeline complete: {n} frames ({'video' if save_mode == 'video' else 'images'}) in {output_dir}")
     return 0
 

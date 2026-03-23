@@ -1,6 +1,8 @@
 data/
 outputs/
+results_vbench/
 condaenv*
+venv/
 tests/
 __pycache__/
 plans/
