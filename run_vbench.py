@@ -37,6 +37,22 @@ def _load_demo_meta() -> tuple[list, list]:
     return m["K"], m["c2w"]
 
 
+def _interp_c2w(c2w: list, num_frames: int) -> list:
+    """Linearly resample a list of 4×4 c2w matrices to exactly num_frames poses."""
+    import numpy as np
+    src = np.asarray(c2w, dtype=np.float64)  # (N, 4, 4)
+    N = len(src)
+    if N == num_frames:
+        return c2w
+    t_src = np.linspace(0.0, 1.0, N)
+    t_dst = np.linspace(0.0, 1.0, num_frames)
+    out = np.zeros((num_frames, 4, 4), dtype=np.float64)
+    for r in range(4):
+        for c in range(4):
+            out[:, r, c] = np.interp(t_dst, t_src, src[:, r, c])
+    return out.tolist()
+
+
 def _check_brightness(path: Path, label: str, is_video: bool) -> None:
     import cv2 as _cv2
     if not path.exists():
@@ -99,6 +115,7 @@ def run_vbench(
     config: str,
     num_samples: int,
     num_seeds: int,
+    num_frames: int,
     image_types: list[str],
     skip_existing: bool,
     extra_args: list[str],
@@ -119,6 +136,9 @@ def run_vbench(
     exp_h = cfg_dict.get("worldfm", {}).get("image_height", 0)
 
     K, c2w = _load_demo_meta()
+    if num_frames > 0:
+        c2w = _interp_c2w(c2w, num_frames)
+        print(f"[trajectory] resampled to {len(c2w)} poses", flush=True)
     output_dir.mkdir(parents=True, exist_ok=True)
     tmp_dir.mkdir(parents=True, exist_ok=True)
 
@@ -277,6 +297,8 @@ def main() -> int:
                    help="Max number of VBench images to process (0 = all)")
     p.add_argument("--num-seeds", type=int, default=5,
                    help="Number of seeds (runs) per image")
+    p.add_argument("--num-frames", type=int, default=161,
+                   help="Number of output frames (c2w poses); 0 = use trajectory as-is")
     p.add_argument("--image-types", type=str, default="indoor,scenery",
                    help="Comma-separated VBench type filter (e.g. indoor,scenery)")
     p.add_argument("--skip-existing", action="store_true", default=True,
@@ -293,6 +315,7 @@ def main() -> int:
         config=args.config,
         num_samples=args.num_samples,
         num_seeds=args.num_seeds,
+        num_frames=args.num_frames,
         image_types=image_types,
         skip_existing=args.skip_existing,
         extra_args=extra,
