@@ -14,6 +14,7 @@ import json
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -78,7 +79,7 @@ def _check_brightness(path: Path, label: str, is_video: bool) -> None:
     print(f"    {label}: brightness={brightness:.1f}", flush=True)
 
 
-def _sys_stats() -> tuple[float, float, float, float]:
+def _sys_stats(vram_peak_gb: float = 0.0) -> tuple[float, float, float, float]:
     """Returns (ram_used_gb, ram_total_gb, vram_used_gb, vram_total_gb)."""
     try:
         import psutil
@@ -87,15 +88,41 @@ def _sys_stats() -> tuple[float, float, float, float]:
     except Exception:
         ram_used, ram_total = 0.0, 0.0
     try:
-        import torch
-        if torch.cuda.is_available():
-            vram_used  = torch.cuda.memory_allocated() / 1024**3
-            vram_total = torch.cuda.get_device_properties(0).total_memory / 1024**3
-        else:
-            vram_used = vram_total = 0.0
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5,
+        )
+        vram_total = float(result.stdout.strip().split("\n")[0]) / 1024
     except Exception:
-        vram_used = vram_total = 0.0
-    return ram_used, ram_total, vram_used, vram_total
+        vram_total = 0.0
+    return ram_used, ram_total, vram_peak_gb, vram_total
+
+
+def _run_subprocess_track_vram(cmd: list[str]) -> tuple[int, float]:
+    """Run cmd as a subprocess, polling nvidia-smi to track peak VRAM (GB)."""
+    peak_vram: list[float] = [0.0]
+    stop = threading.Event()
+
+    def _poll() -> None:
+        while not stop.is_set():
+            try:
+                r = subprocess.run(
+                    ["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                mb = float(r.stdout.strip().split("\n")[0])
+                if mb > peak_vram[0]:
+                    peak_vram[0] = mb
+            except Exception:
+                pass
+            stop.wait(2.0)
+
+    t = threading.Thread(target=_poll, daemon=True)
+    t.start()
+    ret = subprocess.call(cmd)
+    stop.set()
+    t.join(timeout=5)
+    return ret, peak_vram[0] / 1024
 
 
 def _video_fps_frames(path: Path) -> tuple[float, int]:
@@ -218,11 +245,11 @@ def run_vbench(
 
             t0 = time.perf_counter()
             print(f"    seed {seed_idx} ...", flush=True)
-            ret = subprocess.call(cmd)
+            ret, vram_peak = _run_subprocess_track_vram(cmd)
             duration = time.perf_counter() - t0
 
             if ret != 0:
-                ram_used, ram_total, vram_used, vram_total = _sys_stats()
+                ram_used, ram_total, vram_used, vram_total = _sys_stats(vram_peak)
                 print(f"[error] pipeline returned {ret} (seed={seed_idx})", flush=True)
                 stats_w.writerow([time.strftime("%Y-%m-%dT%H:%M:%S"), processed, caption, seed_idx,
                                    f"{duration:.1f}", "", "",
@@ -255,7 +282,7 @@ def run_vbench(
             for f in (pipeline_out / seed_name).iterdir():
                 shutil.move(str(f), str(seed_out / f.name))
 
-            ram_used, ram_total, vram_used, vram_total = _sys_stats()
+            ram_used, ram_total, vram_used, vram_total = _sys_stats(vram_peak)
             ok_total_s += duration
             generated += 1
             avg_s = ok_total_s / generated
