@@ -15,6 +15,7 @@ submodules:
 # ─── Step 1: Panorama generation (HunyuanWorld) ─────────────────────────────
 panogen:
   seed: 42
+  num_inference_steps: 50
   fp8_attention: false
   fp8_gemm: false
   cache: false
